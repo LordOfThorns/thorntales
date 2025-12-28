@@ -1,47 +1,40 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>My Site</title>
-
-  <link rel="stylesheet" href="./assets/style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Home</title>
+  <link rel="stylesheet" href="./assets/style.css" />
 </head>
+
 <body>
-  <header class="site-header">
-    <div class="container">
-      <h1 class="site-title">My Site</h1>
-      <nav class="nav">
-        <a href="#">Тексты</a>
-        <a href="#">Проекты</a>
-        <a href="#">Заметки</a>
-        <a href="#">О сайте</a>
-      </nav>
-    </div>
-  </header>
+  <main class="wrap">
+    <header class="top">
+      <h1>Вы в Башне Тысячи Витражей</h1>
+      <p class="sub">если ты помнишь ту станцию<br>
+где открывается этот край<br>
+окно в семигранной витражной башне<br>
+скажи мне<br>
+я разобью витраж</p>
+    </header>
 
-  <main class="container">
-    <section class="hero">
-      <h2>Заголовок</h2>
-      <p>
-        Короткое описание того, что здесь происходит.
-      </p>
+    <section class="windows" aria-label="Главная навигация витражами">
+      <a class="window" href="./texts.html" style="--img:url('./img/window-1.jpg')">
+        <span class="label">Тексты</span>
+      </a>
+
+      <a class="window" href="./projects.html" style="--img:url('./img/window-2.jpg')">
+        <span class="label">Проекты</span>
+      </a>
+
+      <a class="window" href="./about.html" style="--img:url('./img/window-3.jpg')">
+        <span class="label">Обо мне</span>
+      </a>
     </section>
 
-    <section class="content">
-      <h3>Последнее</h3>
-      <ul>
-        <li><a href="#">Текст №1</a></li>
-        <li><a href="#">Текст №2</a></li>
-        <li><a href="#">Текст №3</a></li>
-      </ul>
-    </section>
+    <footer class="bottom">
+      <small>© 2025</small>
+    </footer>
   </main>
-
-  <footer class="site-footer">
-    <div class="container">
-      <p>© 2025</p>
-    </div>
-  </footer>
 </body>
 </html>
