@@ -67,7 +67,7 @@ body{
   display: grid;
 
   /* ключ: авто-колонки фиксированной ширины */
-  grid-template-columns: repeat(auto-fit, 220px);
+  grid-template-columns: repeat(auto-fit, 250px);
 
   /* центрируем всю “группу” */
   justify-content: center;
@@ -91,7 +91,7 @@ body{
 
 /* ===== кликабельная зона окна, без прыжков ===== */
 .window{
-  width: 220px;      /* фиксируем, чтобы grid работал предсказуемо */
+  width: 250px;      /* фиксируем, чтобы grid работал предсказуемо */
   margin: 0 auto;    /* на всякий случай */
   position: relative;
   display: block;
