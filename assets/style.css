@@ -61,9 +61,20 @@ body{
 
 /* ===== окна: без карточки/подложки ===== */
 .windows{
+  max-width: 90vw;
+  margin: 0 auto;
+
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+
+  /* ключ: авто-колонки фиксированной ширины */
+  grid-template-columns: repeat(auto-fit, 220px);
+
+  /* центрируем всю “группу” */
+  justify-content: center;
+
+  /* нормальные гэпы */
   gap: 22px;
+
   align-items: stretch;
 
   padding: 0;
@@ -72,12 +83,16 @@ body{
   background: transparent;
 }
 
-@media (max-width: 860px){
-  .windows{ grid-template-columns: 1fr; }
+
+@media (max-width: 520px){
+  .windows{ grid-template-columns: 1fr; justify-items: center; }
+  .window{ width: min(220px, 92vw); }
 }
 
 /* ===== кликабельная зона окна, без прыжков ===== */
 .window{
+  width: 220px;      /* фиксируем, чтобы grid работал предсказуемо */
+  margin: 0 auto;    /* на всякий случай */
   position: relative;
   display: block;
   aspect-ratio: 3 / 5;
@@ -88,7 +103,6 @@ body{
   border-radius: 0;
   padding: 0;
 
-  /* внешняя тень, чтобы окно “сидело” в стене */
   filter: drop-shadow(0 18px 38px rgba(0,0,0,.58));
   transition: filter .18s ease, opacity .18s ease;
 }
@@ -241,9 +255,24 @@ body{
 .label{
   position: absolute;
   left: 50%;
-  bottom: 10px;
-  transform: translateX(-50%);
-  padding: 8px 12px;
+
+  /* ставим верх лейбла на нижнюю границу окна */
+  top: 100%;
+
+  /* сдвигаем его так, чтобы середина совпала с границей */
+  transform: translate(-50%, -50%);
+
+  width: 70%;
+  max-width: 180px;
+  padding: 12px 16px;
+
+  text-align: center;
+  line-height: 1.25;
+
+  white-space: normal;
+  word-break: normal;
+  hyphens: auto;
+
   border-radius: 999px;
   font-weight: 650;
   letter-spacing: .2px;
@@ -275,4 +304,161 @@ body{
 
 .bottom small{
   color: rgba(233,231,255,.55);
+}
+
+
+
+
+
+/* ===== BREAK EFFECT ===== */
+.window .glass{
+  position: absolute;
+  inset: 12px;
+  border-radius: 12px;
+  overflow: hidden; /* КРИТИЧЕСКИ ВАЖНО */
+
+  clip-path: polygon(
+    50% 0%,
+    82% 12%,
+    100% 32%,
+    100% 100%,
+    0% 100%,
+    0% 32%,
+    18% 12%
+  );
+
+  box-shadow:
+    0 12px 30px rgba(0,0,0,.62) inset,
+    0 0 0 1px rgba(255,255,255,.08) inset;
+}
+
+.window .img{
+  position: absolute;
+  inset: 0;
+
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.10), rgba(0,0,0,.34)),
+    var(--img) center / cover no-repeat;
+
+  transform: scale(1);
+  transform-origin: center;
+
+  transition: transform 900ms cubic-bezier(.12, .72, .18, 1);
+  will-change: transform;
+}
+
+/* Слой “стекла” поверх: трещины + быстрое исчезновение */
+.window .lead{
+  position: absolute; /* у тебя уже так, но пусть будет */
+  opacity: .92;
+  transition:
+    opacity 220ms ease-out,
+    filter 220ms ease-out;
+  will-change: opacity, filter;
+}
+
+/* Трещины рисуем псевдоэлементом */
+.window .lead::after{
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+
+  /* имитация трещин: несколько тонких линий разными углами */
+  background:
+    repeating-linear-gradient(18deg,
+      rgba(255,255,255,.0) 0 10px,
+      rgba(255,255,255,.45) 10px 11px,
+      rgba(255,255,255,.0) 11px 22px
+    ),
+    repeating-linear-gradient(-32deg,
+      rgba(255,255,255,.0) 0 14px,
+      rgba(255,255,255,.35) 14px 15px,
+      rgba(255,255,255,.0) 15px 30px
+    ),
+    radial-gradient(circle at 52% 38%,
+      rgba(255,255,255,.55) 0 2px,
+      rgba(255,255,255,0) 3px 100%
+    );
+
+  mix-blend-mode: screen;
+}
+
+/* Активное состояние: трещины на мгновение, потом стекло “исчезает” */
+.window.is-broken .lead{
+  opacity: 0;
+  filter: blur(1px);
+}
+
+.window.is-broken .lead::after{
+  opacity: 1;
+}
+
+/* Картинка внутри: увеличивается до 2х */
+.window.is-broken .img{
+  transform: scale(2);
+}
+
+
+/* ===== Shards (осколки) ===== */
+.window{
+  position: relative;
+}
+
+/* Контейнер осколков поверх окна */
+.window .shards{
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible; /* осколки должны вылетать наружу */
+}
+
+/* Один осколок */
+.window .shard{
+  position: absolute;
+
+  /* форма осколка */
+  width: var(--w, 14px);
+  height: var(--h, 18px);
+  clip-path: polygon(10% 0%, 100% 18%, 72% 100%, 0% 76%);
+
+  /* внешний вид */
+  background: rgba(210, 220, 255, 0.22);
+  border: 1px solid rgba(255,255,255,0.22);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+
+  /* анимация полёта */
+  transform:
+    translate(0,0)
+    rotate(var(--r0, 0deg));
+  opacity: 1;
+
+  animation: shard-fly 520ms cubic-bezier(.16, .82, .22, 1) forwards;
+  will-change: transform, opacity;
+}
+
+/* Полёт осколков */
+@keyframes shard-fly{
+  0%{
+    transform: translate(0,0) rotate(var(--r0, 0deg)) scale(1);
+    opacity: 1;
+  }
+  70%{
+    opacity: 1;
+  }
+  100%{
+    transform:
+      translate(var(--dx, 0px), var(--dy, 0px))
+      rotate(var(--r1, 180deg))
+      scale(0.9);
+    opacity: 0;
+  }
+}
+
+/* Чуть больше драматизма: когда разбито, сетка исчезает быстрее */
+.window.is-broken .lead{
+  opacity: 0;
+  filter: blur(1px);
 }
