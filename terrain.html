@@ -24,7 +24,7 @@
 
   <div class="map-controls">
     <label>Seed
-      <input id="seed" type="number" value="1337">
+      <input id="seed" type="number" value="6000">
     </label>
 
     <label>Size
@@ -34,6 +34,13 @@
         <option>1024</option>
       </select>
     </label>
+	
+	<label>Mode
+  <select id="mode">
+    <option value="biomes" selected>Biomes</option>
+    <option value="height">Height</option>
+  </select>
+</label>
 
     <label>Continents
       <input id="contMin" type="number" min="1" max="10" value="2">
@@ -42,12 +49,20 @@
     </label>
 
     <label>Sea
-      <input id="sea" type="number" step="0.01" min="0.05" max="0.95" value="0.50">
+      <input id="sea" type="number" step="0.01" min="0.05" max="0.95" value="0.30">
     </label>
 
     <label>Rivers
       <input id="rivers" type="number" value="1800">
     </label>
+	
+	<label>Mountains
+  <input id="mount" type="number" step="0.01" min="0" max="0.6" value="0.18">
+</label>
+
+<label>Deserts
+  <input id="desert" type="number" step="0.01" min="0" max="1" value="0.35">
+</label>
 
     <button id="gen">Generate</button>
   </div>
@@ -59,23 +74,37 @@
 <script src="./assets/terrain-map.js"></script>
 <script>
   function gen() {
-    const seed = parseInt(document.getElementById('seed').value, 10) || 1337;
+    const seed = parseInt(document.getElementById('seed').value, 10) || 6000;
     const size = parseInt(document.getElementById('size').value, 10) || 768;
     let contMin = parseInt(document.getElementById('contMin').value, 10) || 2;
+	let riverThreshold = parseInt(document.getElementById('rivers').value, 10) || 1800;
+	let mountainsStrength = parseFloat(document.getElementById('mount').value) || 0.18;
+	let desertStrength = parseFloat(document.getElementById('desert').value) || 0.35;
     let contMax = parseInt(document.getElementById('contMax').value, 10) || 6;
     contMin = Math.max(1, Math.min(contMin, 12));
     contMax = Math.max(contMin, Math.min(contMax, 12));
-
-    TerrainMap.render({
-      canvas: document.getElementById('map'),
-      size,
-      seed,
-      seaLevel: parseFloat(document.getElementById('sea').value) || 0.50,
-      riverThreshold: parseInt(document.getElementById('rivers').value, 10) || 1800,
-      continentsMin: contMin,
-      continentsMax: contMax,
-    });
+	let seaLevel = parseFloat(document.getElementById('sea').value) || 0.30;
+	const mode = document.getElementById('mode').value || 'biomes';
+	
+	
+	
+	TerrainMap.render({
+	  canvas: document.getElementById('map'),
+	  size,
+	  seed,
+	  seaLevel,
+	  riverThreshold,
+	  continentsMin: contMin,
+	  continentsMax: contMax,
+	  plates: 18,     // попробуй 12..24
+	  windDir: 'W',   // 'W'|'E'|'N'|'S'
+	  mountainsStrength,
+	  desertStrength,
+	  mode,
+	});
   }
+  
+  
 
   document.getElementById('gen').addEventListener('click', gen);
   gen();

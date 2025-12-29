@@ -1,10 +1,13 @@
 /* terrain-map.js
-   Procedural physical-ish terrain map with rivers (flow accumulation),
-   depression filling, thermal erosion, and hillshade.
+   Procedural terrain + rivers + climate/biomes + pseudo-tectonics (Voronoi plates).
    No deps. Canvas2D.
 
    Public API:
-     TerrainMap.render({ canvas, size, seed, seaLevel, riverThreshold })
+     TerrainMap.render({
+       canvas, size, seed, seaLevel, riverThreshold,
+       continentsMin, continentsMax,
+       plates, windDir
+     })
 */
 
 (function () {
@@ -15,6 +18,8 @@
   function clamp(x, a, b) { return x < a ? a : (x > b ? b : x); }
   function lerp(a, b, t) { return a + (b - a) * t; }
   function smoothstep(t) { return t * t * (3 - 2 * t); }
+  function fract(x) { return x - Math.floor(x); }
+  function length2(x, y) { return Math.sqrt(x * x + y * y); }
 
   // Fast-ish seeded RNG (Mulberry32)
   function mulberry32(seed) {
@@ -29,7 +34,6 @@
 
   // Hash for integer coords -> [0,1)
   function hash2i(x, y, seed) {
-    // Robert Jenkins-ish mix + seed
     let n = (x * 374761393 + y * 668265263) ^ (seed * 1442695041);
     n = (n ^ (n >>> 13)) * 1274126177;
     n = (n ^ (n >>> 16)) >>> 0;
@@ -76,93 +80,272 @@
     [-1, 1],  [0, 1],  [1, 1]
   ];
 
-  // -------------------- Terrain generation --------------------
+  // -------------------- Continents / base height --------------------
 
-function buildHeightmap(n, seed, continentsMin, continentsMax) {
-  const h = new Float32Array(n * n);
-  const rng = mulberry32(seed);
+  function buildHeightmap(n, seed, continentsMin, continentsMax) {
+    const h = new Float32Array(n * n);
+    const rng = mulberry32(seed);
 
-  // Сколько материков реально делаем (равномерно в диапазоне)
-  const cmin = Math.max(1, continentsMin | 0);
-  const cmax = Math.max(cmin, continentsMax | 0);
-  const continents = cmin + ((rng() * (cmax - cmin + 1)) | 0);
+    const cmin = Math.max(1, continentsMin | 0);
+    const cmax = Math.max(cmin, continentsMax | 0);
+    const continents = cmin + ((rng() * (cmax - cmin + 1)) | 0);
 
-  // Параметры "бугров" материков
-  const centers = [];
-  for (let i = 0; i < continents; i++) {
-    // Не ставим центры слишком близко к краям, чтобы материки не были “обрезками”
-    const cx = 0.15 + rng() * 0.70;
-    const cy = 0.15 + rng() * 0.70;
+    const centers = [];
+    for (let i = 0; i < continents; i++) {
+      const cx = 0.12 + rng() * 0.76;
+      const cy = 0.12 + rng() * 0.76;
+      const sx = 0.10 + rng() * 0.20;
+      const sy = 0.10 + rng() * 0.20;
+      const w = 0.8 + rng() * 1.0;
+      centers.push({ cx, cy, sx, sy, w });
+    }
 
-    // Разный размер материка
-    const sx = 0.10 + rng() * 0.18;
-    const sy = 0.10 + rng() * 0.18;
+    function warp(u, v) {
+      const wx = fbm(u * 2.0, v * 2.0, seed + 900, 3, 2.0, 0.5) - 0.5;
+      const wy = fbm(u * 2.0, v * 2.0, seed + 901, 3, 2.0, 0.5) - 0.5;
+      return [u + wx * 0.08, v + wy * 0.08];
+    }
 
-    // Вес (влияет на “высоту” суши)
-    const w = 0.8 + rng() * 0.9;
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const u0 = x / (n - 1);
+        const v0 = y / (n - 1);
+        const [u, v] = warp(u0, v0);
 
-    centers.push({ cx, cy, sx, sy, w });
-  }
+        let cont = 0;
+        for (let k = 0; k < centers.length; k++) {
+          const c = centers[k];
+          const dx = (u - c.cx) / c.sx;
+          const dy = (v - c.cy) / c.sy;
+          const g = Math.exp(-(dx * dx + dy * dy));
+          cont += g * c.w;
+        }
 
-  // Domain warp, чтобы убрать “слишком ровные” формы
-  // Это дешёвый варп на базе шума.
-  function warp(u, v) {
-    const wx = fbm(u * 2.0, v * 2.0, seed + 900, 3, 2.0, 0.5) - 0.5;
-    const wy = fbm(u * 2.0, v * 2.0, seed + 901, 3, 2.0, 0.5) - 0.5;
-    return [u + wx * 0.08, v + wy * 0.08];
-  }
+        cont = cont / (continents * 0.95);
+        cont = clamp(cont, 0, 1);
+        cont = Math.pow(cont, 1.35);
 
-  for (let y = 0; y < n; y++) {
-    for (let x = 0; x < n; x++) {
-      const u0 = x / (n - 1);
-      const v0 = y / (n - 1);
-      const [u, v] = warp(u0, v0);
+        const shore = fbm(u * 6.0, v * 6.0, seed + 111, 5, 2.0, 0.5);
+        const shore2 = fbm(u * 18.0, v * 18.0, seed + 112, 4, 2.0, 0.5);
+        const coast = clamp(cont + (shore - 0.5) * 0.22 + (shore2 - 0.5) * 0.10, 0, 1);
 
-      // --- Continent mask: сумма гауссиан ---
-      let cont = 0;
-      for (let k = 0; k < centers.length; k++) {
-        const c = centers[k];
-        const dx = (u - c.cx) / c.sx;
-        const dy = (v - c.cy) / c.sy;
-        const g = Math.exp(-(dx * dx + dy * dy)); // 0..1
-        cont += g * c.w;
+        const d = fbm(u * 22.0, v * 22.0, seed + 30, 5, 2.0, 0.5);
+        let height = 0.82 * coast + 0.18 * d;
+
+        h[idx(x, y, n)] = height;
       }
+    }
 
-      // Нормируем и делаем края материков более “острыми”
-      cont = cont / (continents * 0.95);
-      cont = clamp(cont, 0, 1);
-      cont = Math.pow(cont, 1.35);
+    normalize01(h);
+    return h;
+  }
 
-      // --- Shoreline noise: рваные берега ---
-      const shore = fbm(u * 6.0, v * 6.0, seed + 111, 5, 2.0, 0.5);
-      const shore2 = fbm(u * 18.0, v * 18.0, seed + 112, 4, 2.0, 0.5);
-      const coast = clamp(cont + (shore - 0.5) * 0.22 + (shore2 - 0.5) * 0.10, 0, 1);
+  function normalize01(a) {
+    let min = Infinity, max = -Infinity;
+    for (let i = 0; i < a.length; i++) { if (a[i] < min) min = a[i]; if (a[i] > max) max = a[i]; }
+    const inv = 1 / (max - min + 1e-9);
+    for (let i = 0; i < a.length; i++) a[i] = (a[i] - min) * inv;
+  }
 
-      // --- Mountains + detail ---
-      const m = fbm(u * 8.0, v * 8.0, seed + 20, 6, 2.0, 0.5);
-      const ridge = 1.0 - Math.abs(m * 2.0 - 1.0);
-      const mountains = Math.pow(ridge, 2.2);
+  // -------------------- Pseudo-tectonics (Voronoi plates) --------------------
 
-      const d = fbm(u * 24.0, v * 24.0, seed + 30, 5, 2.0, 0.5);
+  function generatePlates(seed, platesCount) {
+    const rng = mulberry32(seed + 777);
+    const p = [];
+    const count = clamp(platesCount | 0, 4, 40);
 
-      // Высота: материк задаёт “сушу/воду”, горы добавляются на суше
-      // Важно: больше НЕ делаем радиальный edge-falloff, иначе опять будет “один круглый материк”.
-      let height = 0.78 * coast + 0.18 * d + 0.20 * mountains * coast;
+    for (let i = 0; i < count; i++) {
+      const x = rng();
+      const y = rng();
+      const ang = rng() * Math.PI * 2;
+      const spd = 0.25 + rng() * 0.85; // relative speed
+      const vx = Math.cos(ang) * spd;
+      const vy = Math.sin(ang) * spd;
 
-      h[idx(x, y, n)] = height;
+      // oceanic vs continental tendency (affects baseline uplift a bit)
+      const type = rng() < 0.55 ? 0 : 1; // 0 oceanic, 1 continental
+      p.push({ x, y, vx, vy, type });
+    }
+    return p;
+  }
+
+  // For each cell: nearest plate id and second nearest distance for boundary strength.
+  function computePlateFields(n, plates) {
+    const ids = new Int16Array(n * n);
+    const d2min = new Float32Array(n * n);
+    const d2second = new Float32Array(n * n);
+
+    for (let y = 0; y < n; y++) {
+      const v = y / (n - 1);
+      for (let x = 0; x < n; x++) {
+        const u = x / (n - 1);
+
+        let bestId = 0;
+        let best = Infinity;
+        let second = Infinity;
+
+        for (let k = 0; k < plates.length; k++) {
+          const dx = u - plates[k].x;
+          const dy = v - plates[k].y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < best) {
+            second = best;
+            best = d2;
+            bestId = k;
+          } else if (d2 < second) {
+            second = d2;
+          }
+        }
+
+        const i = idx(x, y, n);
+        ids[i] = bestId;
+        d2min[i] = best;
+        d2second[i] = second;
+      }
+    }
+
+    return { ids, d2min, d2second };
+  }
+
+  // Build uplift map: mountains on convergent boundaries, rifts on divergent.
+  function buildUpliftMap(n, plates, plateFields, seed) {
+    const { ids, d2min, d2second } = plateFields;
+    const uplift = new Float32Array(n * n);
+
+    // boundary strength based on how close 1st/2nd nearest are (Voronoi edge)
+    // smaller gap -> stronger boundary
+    for (let y = 1; y < n - 1; y++) {
+      for (let x = 1; x < n - 1; x++) {
+        const i = idx(x, y, n);
+        const idA = ids[i];
+
+        // detect if near boundary: neighbour has different plate id
+        let idB = idA;
+        for (let k = 0; k < 8; k++) {
+          const j = idx(x + N8[k][0], y + N8[k][1], n);
+          if (ids[j] !== idA) { idB = ids[j]; break; }
+        }
+
+        if (idB === idA) continue;
+
+        const A = plates[idA];
+        const B = plates[idB];
+
+        // boundary weight: 0..1
+		const f1 = Math.sqrt(d2min[i]);
+		const f2 = Math.sqrt(d2second[i]);
+		const df = Math.max(1e-6, f2 - f1); // чем меньше, тем ближе к границе
+
+		// ширина границы в "долях карты" (подбирается)
+		const width = 0.020; // попробуй 0.015..0.030
+		let bw = clamp(1.0 - (df / width), 0, 1);
+
+		// сделаем профиль “горного пояса” более естественным
+		bw = bw * bw; // или bw = Math.pow(bw, 2.0);
+
+        if (bw <= 0) continue;
+
+        // boundary normal approx: from A to B
+        const px = x / (n - 1);
+        const py = y / (n - 1);
+        // use vector between plate centers as proxy for boundary normal
+        let nx = B.x - A.x;
+        let ny = B.y - A.y;
+        const invn = 1 / (Math.sqrt(nx * nx + ny * ny) + 1e-9);
+        nx *= invn; ny *= invn;
+
+        // relative velocity
+        const rvx = B.vx - A.vx;
+        const rvy = B.vy - A.vy;
+
+        // convergence positive if moving towards each other along normal
+        const conv = -(rvx * nx + rvy * ny); // >0 convergent, <0 divergent
+
+        // shear magnitude (transform faults)
+        const shear = Math.abs(rvx * (-ny) + rvy * nx);
+
+        // convert to uplift
+        let u = 0;
+
+        if (conv > 0) {
+          // mountains
+          u += conv * 0.9;
+          // continental-continental more mountainy
+          if (A.type === 1 && B.type === 1) u *= 1.15;
+        } else {
+          // rifts / trenches (negative)
+          u += conv * 0.45; // conv is negative
+          // oceanic divergence tends to create mid-ocean ridges, keep small negative
+          if (A.type === 0 && B.type === 0) u *= 0.6;
+        }
+
+        // shear adds slight roughness
+        u += shear * 0.18;
+
+        // add some noise so boundaries aren’t perfect lines
+        const nu = fbm(px * 10.0, py * 10.0, seed + 500, 3, 2.0, 0.5) - 0.5;
+        u *= (0.85 + nu * 0.3);
+
+        uplift[i] = u * bw;
+      }
+    }
+
+    // blur a bit to spread ridges
+    boxBlur(uplift, n, 4);
+	boxBlur(uplift, n, 2);
+
+    // normalise uplift into roughly [-1,1] (preserve sign)
+    let maxAbs = 1e-6;
+    for (let i = 0; i < uplift.length; i++) {
+      const a = Math.abs(uplift[i]);
+      if (a > maxAbs) maxAbs = a;
+    }
+    const inv = 1 / maxAbs;
+    for (let i = 0; i < uplift.length; i++) uplift[i] *= inv;
+
+    return uplift;
+  }
+
+  function boxBlur(a, n, radius) {
+    if (radius <= 0) return;
+    const tmp = new Float32Array(a.length);
+    const r = radius;
+
+    // horizontal
+    for (let y = 0; y < n; y++) {
+      let sum = 0;
+      for (let x = -r; x <= r; x++) {
+        const xx = clamp(x, 0, n - 1);
+        sum += a[idx(xx, y, n)];
+      }
+      for (let x = 0; x < n; x++) {
+        tmp[idx(x, y, n)] = sum / (r * 2 + 1);
+        const xOut = x - r;
+        const xIn = x + r + 1;
+        if (xOut >= 0) sum -= a[idx(xOut, y, n)];
+        if (xIn < n) sum += a[idx(xIn, y, n)];
+      }
+    }
+
+    // vertical
+    for (let x = 0; x < n; x++) {
+      let sum = 0;
+      for (let y = -r; y <= r; y++) {
+        const yy = clamp(y, 0, n - 1);
+        sum += tmp[idx(x, yy, n)];
+      }
+      for (let y = 0; y < n; y++) {
+        a[idx(x, y, n)] = sum / (r * 2 + 1);
+        const yOut = y - r;
+        const yIn = y + r + 1;
+        if (yOut >= 0) sum -= tmp[idx(x, yOut, n)];
+        if (yIn < n) sum += tmp[idx(x, yIn, n)];
+      }
     }
   }
 
-  // Normalize to [0,1]
-  let min = Infinity, max = -Infinity;
-  for (let i = 0; i < h.length; i++) { min = Math.min(min, h[i]); max = Math.max(max, h[i]); }
-  const inv = 1 / (max - min + 1e-9);
-  for (let i = 0; i < h.length; i++) h[i] = (h[i] - min) * inv;
+  // -------------------- Erosion --------------------
 
-  return h;
-}
-
-  // Thermal erosion: simple slope-limited relaxation
   function thermalErode(h, n, iterations, talus) {
     const tmp = new Float32Array(h.length);
 
@@ -174,7 +357,6 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
           const i = idx(x, y, n);
           const hi = tmp[i];
 
-          // Find steepest drop neighbor
           let maxDrop = 0;
           let tx = 0, ty = 0;
 
@@ -190,7 +372,6 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
           }
 
           if (maxDrop > talus) {
-            // Move a small fraction "downhill"
             const move = (maxDrop - talus) * 0.25;
             h[i] -= move;
             h[idx(tx, ty, n)] += move;
@@ -198,24 +379,17 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
         }
       }
 
-      // Clamp
       for (let i = 0; i < h.length; i++) h[i] = clamp(h[i], 0, 1);
     }
   }
 
   // -------------------- Hydrology --------------------
 
-  // Depression filling (priority-flood style). Simple and effective.
   function fillDepressions(h, n) {
-    // We will raise interior pits so every cell can drain to boundary.
-    // Algorithm: Priority queue seeded with boundary cells.
-    // For simplicity: implement binary heap.
-
     const size = n * n;
     const visited = new Uint8Array(size);
-    const out = new Float32Array(h); // filled heights
+    const out = new Float32Array(h);
 
-    // Min-heap of [height, index]
     const heapH = new Float32Array(size);
     const heapI = new Int32Array(size);
     let heapSize = 0;
@@ -227,7 +401,6 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
       while (i > 0) {
         const p = (i - 1) >> 1;
         if (heapH[p] <= heapH[i]) break;
-        // swap
         const th = heapH[p]; heapH[p] = heapH[i]; heapH[i] = th;
         const ti = heapI[p]; heapI[p] = heapI[i]; heapI[i] = ti;
         i = p;
@@ -241,7 +414,6 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
       if (heapSize > 0) {
         heapH[0] = heapH[heapSize];
         heapI[0] = heapI[heapSize];
-        // sift down
         let i = 0;
         while (true) {
           const l = i * 2 + 1;
@@ -263,7 +435,6 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
       heapPush(out[i], i);
     }
 
-    // Seed boundaries
     for (let x = 0; x < n; x++) {
       markAndPush(idx(x, 0, n));
       markAndPush(idx(x, n - 1, n));
@@ -286,7 +457,6 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
         if (visited[ni]) continue;
         visited[ni] = 1;
 
-        // If neighbor is lower than current, raise it to current (spill point)
         if (out[ni] < ch) out[ni] = ch;
         heapPush(out[ni], ni);
       }
@@ -295,9 +465,7 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
     return out;
   }
 
-  // Flow direction: for each cell pick the lowest neighbor (D8)
   function computeFlowDir(h, n) {
-    // store downstream index, or -1 if none
     const down = new Int32Array(n * n);
     down.fill(-1);
 
@@ -320,26 +488,22 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
           }
         }
 
-        down[i] = best; // may be -1 on flat/peak
+        down[i] = best;
       }
     }
 
     return down;
   }
 
-  // Flow accumulation using topological order by height (sort indices by height desc)
   function computeFlowAccum(h, down) {
     const nCells = h.length;
     const order = new Int32Array(nCells);
     for (let i = 0; i < nCells; i++) order[i] = i;
 
-    // JS sort on typed array is annoying: convert to normal array for order indices.
-    // This is O(N log N). For 512-1024, OK.
     const ord = Array.from(order);
-    ord.sort((a, b) => h[b] - h[a]); // descending heights
+    ord.sort((a, b) => h[b] - h[a]);
 
     const acc = new Float32Array(nCells);
-    // Each cell contributes 1 unit of "rain"
     for (let i = 0; i < nCells; i++) acc[i] = 1;
 
     for (let k = 0; k < ord.length; k++) {
@@ -351,10 +515,216 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
     return acc;
   }
 
-  // -------------------- Rendering --------------------
+  // -------------------- Climate --------------------
+
+  function computeTemperature(h, n, seaLevel) {
+    const t = new Float32Array(n * n);
+    for (let y = 0; y < n; y++) {
+      const lat = Math.abs((y / (n - 1)) - 0.5) * 2.0; // 0 equator -> 1 poles
+      // base temperature curve (nonlinear: wider tropics)
+      const base = 1.0 - Math.pow(lat, 1.2);
+
+      for (let x = 0; x < n; x++) {
+        const i = idx(x, y, n);
+        const height = h[i];
+
+        // altitude cooling (only above sea)
+        const alt = Math.max(0, (height - seaLevel) / (1 - seaLevel + 1e-9));
+        let temp = base - alt * 0.65;
+
+        // slight coastal moderation: ocean areas less extreme
+        if (height <= seaLevel) temp = base * 0.92 + 0.08;
+
+        t[i] = clamp(temp, 0, 1);
+      }
+    }
+    return t;
+  }
+
+  // windDir: 'W', 'E', 'N', 'S' (dominant wind direction)
+  function computeRain(h, n, seaLevel, windDir, desertStrength) {
+    const rain = new Float32Array(n * n);
+
+    // helpers to scan lines
+    function scanWestToEast() {
+      for (let y = 0; y < n; y++) {
+        let m = 0.0; // moisture carried
+        let prevH = h[idx(0, y, n)];
+        for (let x = 0; x < n; x++) {
+          const i = idx(x, y, n);
+          const hi = h[i];
+
+          if (hi <= seaLevel) {
+            m = 1.0;
+            rain[i] = 1.0;
+            prevH = hi;
+            continue;
+          }
+
+          // decay as we move inland
+          m *= 0.985;
+
+          // orographic precipitation: if slope upward, dump moisture
+          const up = Math.max(0, hi - prevH);
+          const drop = up * 3.0; // tune
+          const r = clamp(m * (0.22 + drop), 0, 1);
+          rain[i] = r;
+
+          // rain shadow: after dumping, moisture decreases
+          m = clamp(m - r * 0.55, 0, 1);
+
+          prevH = hi;
+        }
+      }
+    }
+
+    function scanEastToWest() {
+      for (let y = 0; y < n; y++) {
+        let m = 0.0;
+        let prevH = h[idx(n - 1, y, n)];
+        for (let x = n - 1; x >= 0; x--) {
+          const i = idx(x, y, n);
+          const hi = h[i];
+
+          if (hi <= seaLevel) {
+            m = 1.0;
+            rain[i] = 1.0;
+            prevH = hi;
+            continue;
+          }
+
+          m *= 0.985;
+          const up = Math.max(0, hi - prevH);
+          const drop = up * 3.0;
+          const r = clamp(m * (0.22 + drop), 0, 1);
+          rain[i] = r;
+          m = clamp(m - r * 0.55, 0, 1);
+          prevH = hi;
+        }
+      }
+    }
+
+    function scanNorthToSouth() {
+      for (let x = 0; x < n; x++) {
+        let m = 0.0;
+        let prevH = h[idx(x, 0, n)];
+        for (let y = 0; y < n; y++) {
+          const i = idx(x, y, n);
+          const hi = h[i];
+
+          if (hi <= seaLevel) {
+            m = 1.0;
+            rain[i] = 1.0;
+            prevH = hi;
+            continue;
+          }
+
+          m *= 0.985;
+          const up = Math.max(0, hi - prevH);
+          const drop = up * 3.0;
+          const r = clamp(m * (0.22 + drop), 0, 1);
+          rain[i] = r;
+          m = clamp(m - r * 0.55, 0, 1);
+          prevH = hi;
+        }
+      }
+    }
+
+    function scanSouthToNorth() {
+      for (let x = 0; x < n; x++) {
+        let m = 0.0;
+        let prevH = h[idx(x, n - 1, n)];
+        for (let y = n - 1; y >= 0; y--) {
+          const i = idx(x, y, n);
+          const hi = h[i];
+
+          if (hi <= seaLevel) {
+            m = 1.0;
+            rain[i] = 1.0;
+            prevH = hi;
+            continue;
+          }
+
+          m *= 0.985;
+          const up = Math.max(0, hi - prevH);
+          const drop = up * 3.0;
+          const r = clamp(m * (0.22 + drop), 0, 1);
+          rain[i] = r;
+          m = clamp(m - r * 0.55, 0, 1);
+          prevH = hi;
+        }
+      }
+    }
+
+    // initialise with chosen wind scan
+    if (windDir === 'E') scanEastToWest();
+    else if (windDir === 'N') scanNorthToSouth();
+    else if (windDir === 'S') scanSouthToNorth();
+    else scanWestToEast(); // default W
+
+    // add latitude-driven dryness bands (Hadley cells-ish):
+    for (let y = 0; y < n; y++) {
+      const lat = Math.abs((y / (n - 1)) - 0.5) * 2.0;
+      // deserts around ~0.3 lat, wetter near equator and subpolar
+      const hadleyDry = Math.exp(-Math.pow((lat - 0.35) / 0.14, 2));
+      const equatorWet = Math.exp(-Math.pow(lat / 0.22, 2));
+      const polarDry = Math.exp(-Math.pow((lat - 1.0) / 0.22, 2));
+
+		const ds = clamp(desertStrength ?? 0.35, 0, 1);
+
+		const mod = clamp(
+		  1.0 + equatorWet * 0.25
+			  - hadleyDry * ds
+			  - polarDry * 0.10,
+		  0.45,
+		  1.15
+		);
+
+
+      for (let x = 0; x < n; x++) {
+        const i = idx(x, y, n);
+        // oceans stay wet
+        if (h[i] <= seaLevel) continue;
+        rain[i] = clamp(rain[i] * mod, 0, 1);
+      }
+    }
+	
+	// --- desertStrength should visibly matter ---
+const ds2 = clamp(desertStrength ?? 0.35, 0, 1);
+
+// dryness noise field (patchy deserts, not a clean band)
+const drySeed = 12345;
+
+for (let y = 0; y < n; y++) {
+  const v = y / (n - 1);
+  for (let x = 0; x < n; x++) {
+    const u = x / (n - 1);
+    const i = idx(x, y, n);
+
+    if (h[i] <= seaLevel) continue; // ocean unaffected
+
+    // patchiness: 0..1, makes deserts cluster instead of uniform wash
+    const patch = fbm(u * 3.5, v * 3.5, drySeed, 4, 2.0, 0.5);
+
+    // continentality proxy: less rain where current rain is already low (inland/shadow)
+    const inland = clamp(1.0 - rain[i], 0, 1);
+
+    // reduce rain: stronger in already-dry places + patchy field
+    const dryness = clamp(0.35 + 0.65 * inland, 0, 1) * (0.55 + 0.45 * patch);
+
+    // apply
+    const factor = 1.0 - ds2 * 0.65 * dryness; // 0.65 = strength knob
+    rain[i] = clamp(rain[i] * factor, 0, 1);
+  }
+}
+
+
+    return rain;
+  }
+
+  // -------------------- Rendering helpers --------------------
 
   function hillshade(h, n, x, y) {
-    // simple gradient-based shade
     const xm1 = clamp(x - 1, 0, n - 1);
     const xp1 = clamp(x + 1, 0, n - 1);
     const ym1 = clamp(y - 1, 0, n - 1);
@@ -363,9 +733,7 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
     const dzdx = h[idx(xp1, y, n)] - h[idx(xm1, y, n)];
     const dzdy = h[idx(x, yp1, n)] - h[idx(x, ym1, n)];
 
-    // Light from NW-ish
     const lx = -0.6, ly = -0.6, lz = 0.7;
-    // normal approx
     let nx = -dzdx, ny = -dzdy, nz = 1.0;
     const invLen = 1 / Math.sqrt(nx * nx + ny * ny + nz * nz);
     nx *= invLen; ny *= invLen; nz *= invLen;
@@ -374,37 +742,72 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
     dot = clamp(dot, 0, 1);
     return dot;
   }
+  
+  function heightColor(height, seaLevel) {
+  if (height <= seaLevel) return oceanColor(height, seaLevel);
 
-  function colorFor(height, seaLevel) {
-    // height in [0,1]
-    // returns [r,g,b] 0..255
-    if (height <= seaLevel) {
-      // Ocean gradient
-      const t = height / (seaLevel + 1e-9);
-      const deep = [10, 30, 70];
-      const shallow = [40, 120, 180];
-      return [
-        (deep[0] + (shallow[0] - deep[0]) * t) | 0,
-        (deep[1] + (shallow[1] - deep[1]) * t) | 0,
-        (deep[2] + (shallow[2] - deep[2]) * t) | 0
-      ];
-    }
+  const t = (height - seaLevel) / (1 - seaLevel + 1e-9);
 
-    const t = (height - seaLevel) / (1 - seaLevel + 1e-9);
+  // Hypsometric tint: green -> yellow -> brown -> white
+  if (t < 0.20) return [70, 140, 80];     // lowlands
+  if (t < 0.45) return [145, 170, 90];    // plains / savanna-ish
+  if (t < 0.65) return [170, 165, 110];   // high plains
+  if (t < 0.82) return [140, 125, 105];   // mountains
+  return [235, 235, 240];                 // high peaks / snow
+}
 
-    // Land bands
-    if (t < 0.18) return [70, 120, 60];      // lowlands
-    if (t < 0.40) return [60, 140, 70];      // plains
-    if (t < 0.62) return [90, 130, 80];      // hills
-    if (t < 0.80) return [120, 120, 105];    // mountains
-    return [235, 235, 240];                  // snow
+  function oceanColor(height, seaLevel) {
+    const t = height / (seaLevel + 1e-9);
+    const deep = [10, 30, 70];
+    const shallow = [40, 120, 180];
+    return [
+      (deep[0] + (shallow[0] - deep[0]) * t) | 0,
+      (deep[1] + (shallow[1] - deep[1]) * t) | 0,
+      (deep[2] + (shallow[2] - deep[2]) * t) | 0
+    ];
   }
 
-  function drawMap(ctx, h, acc, n, seaLevel, riverThreshold) {
+  function biomeColor(height, seaLevel, temp, rain) {
+    if (height <= seaLevel) return oceanColor(height, seaLevel);
+
+    const alt = (height - seaLevel) / (1 - seaLevel + 1e-9);
+
+    // snow by altitude or cold
+    if (temp < 0.14 || alt > 0.88) return [235, 235, 240];
+
+    // tundra / cold steppe
+    if (temp < 0.28) {
+      if (rain < 0.30) return [150, 155, 130]; // cold dry
+      return [120, 145, 120];                  // taiga-ish
+    }
+
+    // hot deserts
+    if (rain < 0.20) {
+      if (temp > 0.55) return [200, 180, 110]; // sand
+      return [175, 170, 135];                  // semi-arid / cold desert
+    }
+
+    // grassland / savanna
+    if (rain < 0.38) {
+      if (temp > 0.55) return [165, 175, 80];  // savanna
+      return [120, 165, 95];                   // steppe
+    }
+
+    // forests
+    if (rain < 0.65) {
+      if (temp > 0.55) return [55, 140, 80];   // tropical seasonal forest
+      return [45, 125, 70];                    // temperate forest
+    }
+
+    // rainforests / very wet
+    if (temp > 0.55) return [35, 120, 75];     // rainforest
+    return [55, 120, 95];                      // wet temperate
+  }
+
+  function drawMap(ctx, h, acc, temp, rain, n, seaLevel, riverThreshold, mode) {
     const img = ctx.createImageData(n, n);
     const data = img.data;
 
-    // Normalize acc for visuals
     let accMax = 1;
     for (let i = 0; i < acc.length; i++) if (acc[i] > accMax) accMax = acc[i];
 
@@ -413,21 +816,22 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
         const i = idx(x, y, n);
         const height = h[i];
 
-        let [r, g, b] = colorFor(height, seaLevel);
+        let rgb;
+		if (mode === 'height') rgb = heightColor(height, seaLevel);
+		else rgb = biomeColor(height, seaLevel, temp[i], rain[i]);
+		let [r, g, b] = rgb;
 
-        // Shade (makes terrain readable)
+        // Shade
         const sh = hillshade(h, n, x, y);
         const shade = 0.55 + 0.45 * sh;
         r = (r * shade) | 0;
         g = (g * shade) | 0;
         b = (b * shade) | 0;
 
-        // Rivers: only on land, and only where accumulation is big enough
+        // Rivers
         if (height > seaLevel && acc[i] > riverThreshold) {
-          // thickness grows with log(acc)
           const t = Math.log(acc[i]) / Math.log(accMax + 1e-9);
-          const w = clamp((t - 0.25) * 2.0, 0, 1); // 0..1
-          // Blend towards river blue
+          const w = clamp((t - 0.25) * 2.0, 0, 1);
           const rr = 30, rg = 90, rb = 160;
           r = lerp(r, rr, 0.55 + 0.35 * w) | 0;
           g = lerp(g, rg, 0.55 + 0.35 * w) | 0;
@@ -450,32 +854,62 @@ function buildHeightmap(n, seed, continentsMin, continentsMax) {
   function render(opts) {
     const canvas = opts.canvas;
     if (!canvas) throw new Error('TerrainMap.render: canvas is required');
+
     const n = opts.size || 768;
     const seed = (opts.seed ?? 1337) | 0;
-    const seaLevel = clamp(opts.seaLevel ?? 0.48, 0.05, 0.95);
+    const seaLevel = clamp(opts.seaLevel ?? 0.50, 0.05, 0.95);
     const riverThreshold = opts.riverThreshold ?? 1800;
 
-    // Prepare canvas for crisp pixels
+    const continentsMin = opts.continentsMin ?? 2;
+    const continentsMax = opts.continentsMax ?? 6;
+
+    const platesCount = clamp((opts.plates ?? 16) | 0, 4, 40);
+    const windDir = (opts.windDir ?? 'W'); // 'W','E','N','S'
+
     canvas.width = n;
     canvas.height = n;
-
     const ctx = canvas.getContext('2d', { alpha: false });
 
-    // 1) Height
-    let h = buildHeightmap(n, seed, opts.continentsMin ?? 2, opts.continentsMax ?? 6);
+    // 1) Base height from continents
+    let h = buildHeightmap(n, seed, continentsMin, continentsMax);
 
-    // 2) Erosion (light)
-    thermalErode(h, n, 6, 0.018);
+    // 2) Pseudo-tectonics uplift layer
+    const plates = generatePlates(seed, platesCount);
+    const plateFields = computePlateFields(n, plates);
+    const uplift = buildUpliftMap(n, plates, plateFields, seed);
 
-    // 3) Fill depressions for drainage correctness
+    // apply uplift (mountain chains / rifts)
+	const mountainsStrength = clamp(opts.mountainsStrength ?? 0.18, 0, 0.6);
+
+	for (let i = 0; i < h.length; i++) {
+	  // landMask: 0 в океане, 1 на суше, плавный переход у берега
+	  const m = clamp((h[i] - seaLevel + 0.06) / 0.18, 0, 1);
+	  const landMask = m * m * (3 - 2 * m); // smoothstep
+
+	  // немного оставим океанические хребты, но сильно слабее
+	  const oceanFactor = 0.15;
+	  const factor = oceanFactor + (1 - oceanFactor) * landMask;
+
+	  h[i] = clamp(h[i] + uplift[i] * mountainsStrength * factor, 0, 1);
+	}
+
+    // 3) Erosion (light) after tectonics
+    thermalErode(h, n, 7, 0.017);
+
+    // 4) Fill depressions for drainage
     const hf = fillDepressions(h, n);
 
-    // 4) Flow + accumulation
+    // 5) Hydrology
     const down = computeFlowDir(hf, n);
     const acc = computeFlowAccum(hf, down);
 
-    // 5) Draw
-    drawMap(ctx, h, acc, n, seaLevel, riverThreshold);
+    // 6) Climate
+    const temp = computeTemperature(h, n, seaLevel);
+	const desertStrength = clamp(opts.desertStrength ?? 0.35, 0, 1);
+	const rain = computeRain(h, n, seaLevel, windDir, desertStrength);
+    // 7) Draw
+    const mode = (opts.mode === 'height') ? 'height' : 'biomes';
+	drawMap(ctx, h, acc, temp, rain, n, seaLevel, riverThreshold, mode);
   }
 
   window.TerrainMap = { render };
