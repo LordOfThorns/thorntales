@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="favicon.ico">
+  
+  <meta property="og:title" content="Thorntales">
+<meta property="og:description" content="Verbal art.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://www.thorntales.net/">
+<meta property="og:image" content="https://www.thorntales.net/assets/preview.png">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Home</title>
+  <link rel="stylesheet" href="./assets/style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="top">
+      <h1>Вы в Башне Тысячи Витражей</h1>
+      <p class="sub">Странная карта несуществующего мира. Измените seed чтобы поменять случайную генерацию.</p>
+    </header>
+
+<div class="map-block">
+
+  <div class="map-controls">
+    <label>Seed
+      <input id="seed" type="number" value="1337">
+    </label>
+
+    <label>Size
+      <select id="size">
+        <option>512</option>
+        <option selected>768</option>
+        <option>1024</option>
+      </select>
+    </label>
+
+    <label>Continents
+      <input id="contMin" type="number" min="1" max="10" value="2">
+      –
+      <input id="contMax" type="number" min="1" max="10" value="6">
+    </label>
+
+    <label>Sea
+      <input id="sea" type="number" step="0.01" min="0.05" max="0.95" value="0.50">
+    </label>
+
+    <label>Rivers
+      <input id="rivers" type="number" value="1800">
+    </label>
+
+    <button id="gen">Generate</button>
+  </div>
+
+  <canvas id="map"></canvas>
+
+</div>
+
+<script src="./assets/terrain-map.js"></script>
+<script>
+  function gen() {
+    const seed = parseInt(document.getElementById('seed').value, 10) || 1337;
+    const size = parseInt(document.getElementById('size').value, 10) || 768;
+    let contMin = parseInt(document.getElementById('contMin').value, 10) || 2;
+    let contMax = parseInt(document.getElementById('contMax').value, 10) || 6;
+    contMin = Math.max(1, Math.min(contMin, 12));
+    contMax = Math.max(contMin, Math.min(contMax, 12));
+
+    TerrainMap.render({
+      canvas: document.getElementById('map'),
+      size,
+      seed,
+      seaLevel: parseFloat(document.getElementById('sea').value) || 0.50,
+      riverThreshold: parseInt(document.getElementById('rivers').value, 10) || 1800,
+      continentsMin: contMin,
+      continentsMax: contMax,
+    });
+  }
+
+  document.getElementById('gen').addEventListener('click', gen);
+  gen();
+</script>
+
+    <footer class="bottom">
+      <small>© 2025</small>
+    </footer>
+  </main>
+
+</body>
+</html>
