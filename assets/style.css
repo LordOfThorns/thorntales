@@ -517,3 +517,152 @@ body{
   padding: 4px 10px;
   cursor: pointer;
 }
+
+
+
+
+
+
+/* ===== POETRY ===== */
+
+.poetry-catalogs{
+  margin-top: 18px;
+}
+
+.poetry-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.poetry-card{
+  display: block;
+  text-decoration: none;
+  padding: 16px 18px;
+  border-radius: 16px;
+
+  background: rgba(10, 11, 22, .62);
+  border: 1px solid rgba(255,255,255,.14);
+  backdrop-filter: blur(8px);
+
+  color: rgba(233,231,255,.94);
+  box-shadow: 0 18px 38px rgba(0,0,0,.35);
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.poetry-card:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 22px 55px rgba(0,0,0,.45);
+  border-color: rgba(140,120,255,.35);
+}
+
+.poetry-card__title{
+  font-weight: 750;
+  letter-spacing: .2px;
+  margin: 0 0 6px;
+}
+
+.poetry-card__desc{
+  color: rgba(233,231,255,.72);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* Страница каталога */
+.poetry-page{
+  padding-bottom: 70px;
+}
+
+.poetry-toc{
+  margin: 12px 0 18px;
+}
+
+.poetry-toc__inner{
+  display: grid;
+  gap: 10px;
+
+  padding: 14px;
+  border-radius: 16px;
+
+  background: rgba(10, 11, 22, .55);
+  border: 1px solid rgba(255,255,255,.12);
+  backdrop-filter: blur(8px);
+}
+
+.poetry-toc__link{
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 10px;
+
+  text-decoration: none;
+  padding: 8px 10px;
+  border-radius: 12px;
+
+  color: rgba(233,231,255,.92);
+  border: 1px solid transparent;
+
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.poetry-toc__link:hover{
+  background: rgba(120,140,255,.10);
+  border-color: rgba(255,255,255,.12);
+}
+
+.poetry-toc__date{
+  color: rgba(233,231,255,.62);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.poetry-toc__title{
+  font-weight: 650;
+}
+
+/* Контейнер одного стиха */
+.poem{
+  margin: 0 0 18px;
+  padding: 16px 18px;
+
+  border-radius: 18px;
+  background: rgba(10, 11, 22, .55);
+  border: 1px solid rgba(255,255,255,.12);
+  backdrop-filter: blur(8px);
+
+  box-shadow: 0 18px 38px rgba(0,0,0,.28);
+}
+
+.poem__head{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.poem__title{
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: .2px;
+}
+
+.poem__date{
+  color: rgba(233,231,255,.62);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.poem__text{
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.7;
+  font-size: 15px;
+  color: rgba(233,231,255,.92);
+}
+
+/* на узких экранах оглавление проще */
+@media (max-width: 520px){
+  .poetry-toc__link{ grid-template-columns: 1fr; }
+  .poetry-toc__date{ order: 2; }
+}
