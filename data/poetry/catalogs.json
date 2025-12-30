@@ -1,0 +1,17 @@
+{
+  "title": "Стихи",
+  "catalogs": [
+    {
+      "id": "lyrical",
+      "label": "Последнее",
+      "desc": "Тестовые тексты",
+      "href": "./poems.html?cat=lyrical"
+    },
+    {
+      "id": "drafts",
+      "label": "Черновики",
+      "desc": "Наброски",
+      "href": "./poems.html?cat=drafts"
+    }
+  ]
+}
