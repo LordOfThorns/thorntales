@@ -1,12 +1,6 @@
 {
   "title": "Стихи",
   "catalogs": [
-    {
-      "id": "lyrical",
-      "label": "Последнее",
-      "desc": "Тестовые тексты",
-      "href": "./poems.html?cat=lyrical"
-    },
 	{
       "id": "salvia",
       "label": "Сальвии",
@@ -14,16 +8,10 @@
       "href": "./poems.html?cat=salvia"
     },
 		{
-      "id": "salvia",
+      "id": "in-a-burning-carriage",
       "label": "В горящей карете",
       "desc": "Вторая половина 2018.<br>Беру карандаш, вывожу им на грязном, уже исписанном листке: «Вечно он делает сальто в горящей карете двенадцати». Я не знаю, что означают эти слова, и, честно говоря, не намерен это выяснять.",
       "href": "./poems.html?cat=in-a-burning-carriage"
-    },
-    {
-      "id": "drafts",
-      "label": "Черновики",
-      "desc": "Наброски",
-      "href": "./poems.html?cat=drafts"
     }
   ]
 }
