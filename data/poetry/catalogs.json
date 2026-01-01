@@ -7,6 +7,12 @@
       "desc": "Тестовые тексты",
       "href": "./poems.html?cat=lyrical"
     },
+	{
+      "id": "salvia",
+      "label": "Сальвии",
+      "desc": "Первая половина 2018.",
+      "href": "./poems.html?cat=salvia"
+    },
     {
       "id": "drafts",
       "label": "Черновики",
