@@ -5,11 +5,29 @@
 
   const cat = new URLSearchParams(location.search).get('cat') || 'lyrical';
   const url = `./data/poetry/${encodeURIComponent(cat)}.txt`;
+  const pageSub = document.getElementById('pageSub');
+  const catalogsUrl = './data/poetry/catalogs.json';
 
   try {
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) throw new Error(`${url}: ${res.status}`);
     const raw = await res.text();
+	
+	const catsRes = await fetch(catalogsUrl, { cache: 'no-store' });
+	if (!catsRes.ok) throw new Error(`${catalogsUrl}: ${catsRes.status}`);
+	const catsJson = await catsRes.json();
+
+	const catInfo = (catsJson.catalogs || []).find(x => x.id === cat);
+
+	// Заголовки: label вместо "cat"
+	const title = catInfo?.label || humanizeCat(cat);
+	pageTitle.textContent = title;
+	document.title = title;
+
+	// Подзаголовок: desc (с разрешённым <br>)
+	pageSub.innerHTML = catInfo?.desc
+	  ? allowOnlyBr(catInfo.desc)
+	  : '';
 
     const poems = parsePoemsTxt(raw);
 
@@ -42,6 +60,13 @@
       </article>
     `;
   }
+  
+  function allowOnlyBr(html){
+  // 1) экранируем всё
+  const safe = escapeHtml(html);
+  // 2) возвращаем только <br> обратно (и <br/>)
+  return safe.replace(/&lt;br\s*\/?&gt;/gi, '<br>');
+}
 
   function parsePoemsTxt(raw) {
     // Нормализуем переводы строк
