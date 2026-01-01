@@ -9,46 +9,40 @@
   const catalogsUrl = './data/poetry/catalogs.json';
 
   try {
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`${url}: ${res.status}`);
-    const raw = await res.text();
-	
-	const catsRes = await fetch(catalogsUrl, { cache: 'no-store' });
-	if (!catsRes.ok) throw new Error(`${catalogsUrl}: ${catsRes.status}`);
-	const catsJson = await catsRes.json();
+	  const res = await fetch(url, { cache: 'no-store' });
+	  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+	  const raw = await res.text();
 
-	const catInfo = (catsJson.catalogs || []).find(x => x.id === cat);
+	  const catsRes = await fetch(catalogsUrl, { cache: 'no-store' });
+	  if (!catsRes.ok) throw new Error(`${catalogsUrl}: ${catsRes.status}`);
+	  const catsJson = await catsRes.json();
 
-	// Заголовки: label вместо "cat"
-	const title = catInfo?.label || humanizeCat(cat);
-	pageTitle.textContent = title;
-	document.title = title;
+	  const catInfo = (catsJson.catalogs || []).find(x => x.id === cat);
 
-	// Подзаголовок: desc (с разрешённым <br>)
-	pageSub.innerHTML = catInfo?.desc
-	  ? allowOnlyBr(catInfo.desc)
-	  : '';
+	  // Заголовки: label вместо "cat"
+	  const pageLabel = catInfo?.label || humanizeCat(cat);
+	  pageTitle.textContent = pageLabel;
+	  document.title = pageLabel;
 
-    const poems = parsePoemsTxt(raw);
+	  // Подзаголовок: desc (разрешаем только <br>)
+	  pageSub.innerHTML = catInfo?.desc ? allowOnlyBr(catInfo.desc) : '';
 
-    const title = humanizeCat(cat);
-    pageTitle.textContent = title;
-    document.title = title;
+	  const poems = parsePoemsTxt(raw);
 
-    // TOC
-    toc.innerHTML = `
-      <div class="poetry-toc__inner">
-        ${poems.map(p => `
-          <a class="poetry-toc__link" href="#${escapeAttr(p.id)}">
-            <span class="poetry-toc__date">${escapeHtml(p.date || '')}</span>
-            <span class="poetry-toc__title">${escapeHtml(p.title || '')}</span>
-          </a>
-        `).join('')}
-      </div>
-    `;
+	  // TOC
+	  toc.innerHTML = `
+		<div class="poetry-toc__inner">
+		  ${poems.map(p => `
+			<a class="poetry-toc__link" href="#${escapeAttr(p.id)}">
+			  <span class="poetry-toc__date">${escapeHtml(p.date || '')}</span>
+			  <span class="poetry-toc__title">${escapeHtml(p.title || '')}</span>
+			</a>
+		  `).join('')}
+		</div>
+	  `;
 
-    // Poems
-    poemsHost.innerHTML = poems.map(p => renderPoem(p)).join('');
+	  // Poems
+	  poemsHost.innerHTML = poems.map(p => renderPoem(p)).join('');
 
   } catch (e) {
     poemsHost.innerHTML = `
