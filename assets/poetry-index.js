@@ -12,7 +12,8 @@
         ${data.catalogs.map(c => `
           <a class="poetry-card" href="${c.href}">
             <div class="poetry-card__title">${escapeHtml(c.label)}</div>
-            ${c.desc ? `<div class="poetry-card__desc">${escapeHtml(c.desc)}</div>` : ``}
+            ${c.desc ? `<div class="poetry-card__desc">${c.desc}</div>` : ``}
+
           </a>
         `).join('')}
       </div>
