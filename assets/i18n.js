@@ -120,6 +120,7 @@
       'nav.language': 'Language',
 
       'home.title': 'You are in the Tower of a Thousand Stained-Glass Windows',
+      'home.sub': 'if you remember that station<br>where this land opens up<br>a window in the seven-sided stained-glass tower<br>tell me<br>i will break the glass',
       'home.windows': 'Main navigation',
       'home.window.polarNight': 'Fantasy cycle “Polar Night”',
       'stub.text': 'Oops. You fell through a false window. This section is not ready yet.',
@@ -223,6 +224,7 @@
       'nav.language': 'Sprache',
 
       'home.title': 'Sie sind im Turm der tausend Buntglasfenster',
+      'home.sub': 'wenn du dich an jene Station erinnerst<br>wo sich dieses Land öffnet<br>ein Fenster im siebenseitigen Buntglasturm<br>sag es mir<br>ich zerschlage das Glas',
       'home.windows': 'Hauptnavigation',
       'home.window.polarNight': 'Fantasy-Zyklus „Polarnacht“',
       'stub.text': 'Hoppla. Sie sind durch ein falsches Fenster gefallen. Dieser Bereich ist noch nicht fertig.',

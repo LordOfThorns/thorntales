@@ -70,78 +70,74 @@
     return sum; // ~[0,1]
   }
   
+  // -------------------- Wind --------------------
+  // Planetary wind belts plus a weak, large-scale meander.
+  // lat 0 = equator (map middle), 1 = pole (top/bottom), same as computeTemperature.
+  //   easterly trades 0..0.25, westerlies 0.25..0.75, polar easterlies 0.75..1;
+  //   meridional part: trades blow towards the equator, westerlies towards the pole.
+  // The meander is the curl of a smooth noise field, scaled to at most WIND_MEANDER of the
+  // belt wind, so it bends the flow but cannot turn it into closed eddies.
+  // Speed is NOT renormalised: calm belts (~lat 0.25 / 0.75) stay calm and become dry,
+  // like the subtropical highs on Earth.
+  const WIND_MEANDER = 0.35;
+  const WIND_MERIDIONAL = 0.35;
+
   function buildWindField(g, seed) {
-  const vx = new Float32Array(g * g);
-  const vy = new Float32Array(g * g);
-  const spd = new Float32Array(g * g);
+    const vx = new Float32Array(g * g);
+    const vy = new Float32Array(g * g);
+    const spd = new Float32Array(g * g);
 
-  // stream function ψ(u,v)
-  const psi = new Float32Array(g * g);
-
-  const freq1 = 3.0;
-  const freq2 = 7.0;
-
-  for (let y = 0; y < g; y++) {
-    const v = y / (g - 1);
-    for (let x = 0; x < g; x++) {
-      const u = x / (g - 1);
-
-      // ψ: чем плавнее, тем крупнее вихри (freq ниже = крупнее)
-      const p1 = fbm(u * freq1, v * freq1, seed + 2000, 4, 2.0, 0.5);
-      const p2 = fbm(u * freq2, v * freq2, seed + 3000, 3, 2.0, 0.5);
-      psi[idx(x, y, g)] = 0.75 * p1 + 0.25 * p2;
+    // Low frequency, 2 octaves: broad meanders only (high octaves made small eddies)
+    const psi = new Float32Array(g * g);
+    for (let y = 0; y < g; y++) {
+      for (let x = 0; x < g; x++) {
+        psi[idx(x, y, g)] = fbm((x / (g - 1)) * 2.2, (y / (g - 1)) * 2.2, seed + 2000, 2, 2.0, 0.45);
+      }
     }
-  }
 
-  // curl from ψ via finite differences
-  const eps = 1 / (g - 1);
-
-  for (let y = 0; y < g; y++) {
-    const v = y / (g - 1);
-    const lat = (v - 0.5) * 2.0;          // -1..1
-    const latAbs = Math.abs(lat);         // 0..1
-
-    // Широтные пояса: W->E в умеренных, E->W на экваторе/полюсах
-    // -cos(2π*|lat|): -1 (экватор), +1 (средние), -1 (полюса)
-    const baseX = -Math.cos(2 * Math.PI * latAbs);
-
-    // Умеренные широты более “вихревые”
-    const belt = Math.exp(-Math.pow((latAbs - 0.55) / 0.22, 2)); // пик ~0.55
-    const swirlK = 0.55 + 0.85 * belt; // 0.55..1.40
-
-    for (let x = 0; x < g; x++) {
-      const xm1 = clamp(x - 1, 0, g - 1);
-      const xp1 = clamp(x + 1, 0, g - 1);
-      const ym1 = clamp(y - 1, 0, g - 1);
-      const yp1 = clamp(y + 1, 0, g - 1);
-
-      const dpsi_dx = (psi[idx(xp1, y, g)] - psi[idx(xm1, y, g)]) / (2 * eps + 1e-9);
-      const dpsi_dy = (psi[idx(x, yp1, g)] - psi[idx(x, ym1, g)]) / (2 * eps + 1e-9);
-
-      // curl: v = ( dψ/dy, -dψ/dx )
-      let wx = dpsi_dy;
-      let wy = -dpsi_dx;
-
-      // Смешиваем с широтной “струёй”
-      wx = wx * swirlK + baseX * 1.15;
-      wy = wy * swirlK;
-
-      // Нормализация
-      const len = Math.sqrt(wx * wx + wy * wy) + 1e-9;
-      wx /= len; wy /= len;
-
-      const i = idx(x, y, g);
-      vx[i] = wx;
-      vy[i] = wy;
-
-      // скорость: чуть больше в умеренных широтах + шум
-      const sNoise = fbm((x / (g - 1)) * 2.0, (y / (g - 1)) * 2.0, seed + 4000, 3, 2.0, 0.5);
-      spd[i] = clamp(0.55 + 0.55 * belt + (sNoise - 0.5) * 0.25, 0.25, 1.25);
+    // curl(psi) is divergence free; scale it by its maximum
+    const cx = new Float32Array(g * g);
+    const cy = new Float32Array(g * g);
+    let cmax = 1e-9;
+    for (let y = 0; y < g; y++) {
+      for (let x = 0; x < g; x++) {
+        const xm = Math.max(0, x - 1), xp = Math.min(g - 1, x + 1);
+        const ym = Math.max(0, y - 1), yp = Math.min(g - 1, y + 1);
+        const dx = psi[idx(xp, y, g)] - psi[idx(xm, y, g)];
+        const dy = psi[idx(x, yp, g)] - psi[idx(x, ym, g)];
+        const i = idx(x, y, g);
+        cx[i] = dy;
+        cy[i] = -dx;
+        cmax = Math.max(cmax, Math.hypot(dx, dy));
+      }
     }
-  }
 
-  return { g, vx, vy, spd };
-}
+    for (let y = 0; y < g; y++) {
+      const v = y / (g - 1);
+      const north = v < 0.5;
+      const lat = Math.abs(v - 0.5) * 2;
+
+      const zonal = -Math.cos(2 * Math.PI * lat);
+      let poleward;
+      if (lat < 0.25) poleward = -Math.sin(Math.PI * lat / 0.25);
+      else if (lat < 0.75) poleward = Math.sin(Math.PI * (lat - 0.25) / 0.5);
+      else poleward = -Math.sin(Math.PI * (lat - 0.75) / 0.25);
+      const bx = zonal;
+      const by = WIND_MERIDIONAL * poleward * (north ? -1 : 1); // screen y points south
+
+      for (let x = 0; x < g; x++) {
+        const i = idx(x, y, g);
+        const wx = bx + WIND_MEANDER * cx[i] / cmax;
+        const wy = by + WIND_MEANDER * cy[i] / cmax;
+        const len = Math.hypot(wx, wy) + 1e-9;
+        vx[i] = wx / len;
+        vy[i] = wy / len;
+        spd[i] = clamp(len, 0.05, 1.4);
+      }
+    }
+
+    return { g, vx, vy, spd };
+  }
 
 function sampleWindBilinear(wind, u, v) {
   const g = wind.g;
@@ -649,73 +645,155 @@ function sampleHeightNearest(h, n, u, v) {
     return t;
   }
 
-  // windDir: 'W', 'E', 'N', 'S' (dominant wind direction)
-function computeRainWind(h, n, seaLevel, wind, desertStrength) {
-  const rain = new Float32Array(n * n);
+  // -------------------- Moisture / rain --------------------
+  // Moisture is transported by the wind on a coarse grid (semi-Lagrangian advection),
+  // iterated until it reaches a steady state:
+  //   ocean      recharges the air (warm sea -> more moisture);
+  //   land       rains out a share every step: base rate + orographic lift (air going
+  //              uphill along the wind), much less on the lee side (rain shadow);
+  //              part of the rain evaporates back (plants, lakes);
+  //   cold air   holds less, the excess falls out.
+  // Every cell gets its moisture from the whole upwind area, not from one traced line,
+  // so the result follows coasts and mountains instead of wind streamlines.
+  // Returns rain index 0..1 per pixel (ocean = 1).
+  function computeRain(h, n, seaLevel, temp, wind, desertStrength) {
+    const ds = clamp(desertStrength ?? 0.35, 0, 1);
+    const cg = Math.min(n, 192);       // coarse grid size
+    const scale = n / cg;
+    const dt = 1.2;                    // coarse cells the air moves per step at speed 1
 
-  const ds = clamp(desertStrength ?? 0.35, 0, 1);
-  const dsK = ds * ds;
+    const pBase = 0.003 + 0.016 * ds;  // more deserts -> land dries the air faster
+    const kOro = 5;                    // lift is ~0.02 per step on the steepest 10% of slopes
+    const kShadow = 45;                // descending air: base rate drops to ~30%
+    const recycle = 0.3;
+    const recharge = 0.25;
+    const mix = 0.25;                  // light mixing with neighbours, removes thin filaments
+    // desertStrength changes how far inland moisture gets, not how wet coasts are
+    const pRef = 0.0035 * (pBase / (0.003 + 0.016 * 0.35));
 
-  // параметры: можно крутить
-  const steps = 26;                 // сколько “смотрим по ветру”
-  const baseStep = 1.8 / wind.g;    // шаг в UV
-  const decay = 0.985 - 0.10 * dsK; // чем больше deserts, тем быстрее сохнет
-  const oroK = 2.8;                 // орография
-  const bg = 0.015;                 // фон (чтобы не было 0 везде)
-
-  for (let y = 0; y < n; y++) {
-    const v0 = y / (n - 1);
-    for (let x = 0; x < n; x++) {
-      const u0 = x / (n - 1);
-      const i = idx(x, y, n);
-      const h0 = h[i];
-
-      if (h0 <= seaLevel) {
-        rain[i] = 1.0;
-        continue;
-      }
-
-      let u = u0, v = v0;
-      let m = 0.0;          // влага
-      let accR = 0.0;       // осадки
-      let prevH = h0;
-
-      for (let s = 0; s < steps; s++) {
-        const w = sampleWindBilinear(wind, u, v);
-
-        // backtrace: идём ПРОТИВ ветра, ищем “откуда пришёл воздух”
-        const step = baseStep * w.spd;
-        u = clamp(u - w.vx * step, 0, 1);
-        v = clamp(v - w.vy * step, 0, 1);
-
-        const hh = sampleHeightNearest(h, n, u, v);
-
-        if (hh <= seaLevel) {
-          // над океаном воздух насыщается
-          m = 1.0;
-          prevH = hh;
-          continue;
+    // Coarse height (sea level as floor) and temperature
+    const H = new Float32Array(cg * cg);
+    const T = new Float32Array(cg * cg);
+    const land = new Uint8Array(cg * cg);
+    for (let y = 0; y < cg; y++) {
+      const y0 = Math.floor(y * scale), y1 = Math.max(y0 + 1, Math.floor((y + 1) * scale));
+      for (let x = 0; x < cg; x++) {
+        const x0 = Math.floor(x * scale), x1 = Math.max(x0 + 1, Math.floor((x + 1) * scale));
+        let sh = 0, st = 0, c = 0;
+        for (let yy = y0; yy < y1; yy++) {
+          for (let xx = x0; xx < x1; xx++) {
+            const i = idx(xx, yy, n);
+            sh += Math.max(h[i], seaLevel);
+            st += temp[i];
+            c++;
+          }
         }
-
-        // воздух сушеет по мере движения
-        m *= decay;
-
-        // осадки на подъёме (орография)
-        const up = Math.max(0, hh - prevH);
-        const r = clamp(m * (0.06 + up * oroK), 0, 1);
-
-        accR += r;
-        m = Math.max(0, m - r * 0.65);
-
-        prevH = hh;
+        const j = idx(x, y, cg);
+        H[j] = sh / c;
+        T[j] = st / c;
+        land[j] = H[j] > seaLevel + 1e-6 ? 1 : 0;
       }
-
-      rain[i] = clamp(accR + m * bg, 0, 1);
     }
-  }
 
-  return rain;
-}
+    // Wind displacement per step and orographic lift (wind . grad H)
+    const WX = new Float32Array(cg * cg);
+    const WY = new Float32Array(cg * cg);
+    const LIFT = new Float32Array(cg * cg);
+    for (let y = 0; y < cg; y++) {
+      for (let x = 0; x < cg; x++) {
+        const j = idx(x, y, cg);
+        const w = sampleWindBilinear(wind, x / (cg - 1), y / (cg - 1));
+        WX[j] = w.vx * w.spd * dt;
+        WY[j] = w.vy * w.spd * dt;
+      }
+    }
+    for (let y = 0; y < cg; y++) {
+      for (let x = 0; x < cg; x++) {
+        const xm = Math.max(0, x - 1), xp = Math.min(cg - 1, x + 1);
+        const ym = Math.max(0, y - 1), yp = Math.min(cg - 1, y + 1);
+        const gx = (H[idx(xp, y, cg)] - H[idx(xm, y, cg)]) * 0.5;
+        const gy = (H[idx(x, yp, cg)] - H[idx(x, ym, cg)]) * 0.5;
+        const j = idx(x, y, cg);
+        LIFT[j] = WX[j] * gx + WY[j] * gy;
+      }
+    }
+
+    let Q = new Float32Array(cg * cg);   // moisture in the air
+    let Qn = new Float32Array(cg * cg);
+    const PR = new Float32Array(cg * cg); // precipitation per step
+    const evap = (j) => 0.35 + 0.65 * T[j];
+    const capacity = (j) => 0.2 + 0.8 * T[j];
+    for (let j = 0; j < Q.length; j++) Q[j] = land[j] ? 0 : evap(j);
+
+    function sampleQ(u, v) {
+      // air coming from beyond the map edge is open-ocean air
+      if (u < 0 || v < 0 || u > cg - 1 || v > cg - 1) return 0.6;
+      const x0 = Math.floor(u), y0 = Math.floor(v);
+      const x1 = Math.min(x0 + 1, cg - 1), y1 = Math.min(y0 + 1, cg - 1);
+      const tx = u - x0, ty = v - y0;
+      return lerp(
+        lerp(Q[idx(x0, y0, cg)], Q[idx(x1, y0, cg)], tx),
+        lerp(Q[idx(x0, y1, cg)], Q[idx(x1, y1, cg)], tx),
+        ty
+      );
+    }
+
+    // Enough steps for air to cross the whole map
+    const iterations = Math.ceil((cg * 1.3) / dt);
+    for (let it = 0; it < iterations; it++) {
+      for (let y = 0; y < cg; y++) {
+        for (let x = 0; x < cg; x++) {
+          const j = idx(x, y, cg);
+          let q = sampleQ(x - WX[j], y - WY[j]); // where this air was one step ago
+          const nb = (
+            Q[idx(Math.max(0, x - 1), y, cg)] + Q[idx(Math.min(cg - 1, x + 1), y, cg)] +
+            Q[idx(x, Math.max(0, y - 1), cg)] + Q[idx(x, Math.min(cg - 1, y + 1), cg)]
+          ) * 0.25;
+          q = q * (1 - mix) + nb * mix;
+
+          if (!land[j]) {
+            q += (evap(j) - q) * recharge;
+            PR[j] = 0;
+          } else {
+            const lift = LIFT[j];
+            let rate = pBase + (lift > 0 ? kOro * lift : 0);
+            if (lift < 0) rate *= Math.exp(kShadow * lift);
+            let p = q * clamp(rate, 0, 0.9);
+            const excess = q - p - capacity(j);
+            if (excess > 0) p += excess;
+            q -= p * (1 - recycle);
+            PR[j] = p;
+          }
+          Qn[j] = q;
+        }
+      }
+      const tmp = Q; Q = Qn; Qn = tmp;
+    }
+
+    // Back to full resolution (bilinear over land cells only) and to a 0..1 index
+    const rain = new Float32Array(n * n);
+    for (let y = 0; y < n; y++) {
+      const v = clamp((y + 0.5) / scale - 0.5, 0, cg - 1);
+      const y0 = Math.floor(v), y1 = Math.min(y0 + 1, cg - 1), ty = v - y0;
+      for (let x = 0; x < n; x++) {
+        const i = idx(x, y, n);
+        if (h[i] <= seaLevel) { rain[i] = 1; continue; }
+        const u = clamp((x + 0.5) / scale - 0.5, 0, cg - 1);
+        const x0 = Math.floor(u), x1 = Math.min(x0 + 1, cg - 1), tx = u - x0;
+        let s = 0, wsum = 0;
+        const corners = [
+          [idx(x0, y0, cg), (1 - tx) * (1 - ty)], [idx(x1, y0, cg), tx * (1 - ty)],
+          [idx(x0, y1, cg), (1 - tx) * ty],       [idx(x1, y1, cg), tx * ty],
+        ];
+        for (const [j, wgt] of corners) {
+          if (land[j]) { s += PR[j] * wgt; wsum += wgt; }
+        }
+        const p = wsum > 0 ? s / wsum : 0;
+        rain[i] = 1 - Math.exp(-p / pRef);
+      }
+    }
+    return rain;
+  }
 
 
   // -------------------- Rendering helpers --------------------
@@ -893,27 +971,6 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
   );
 }
 
-function normalizeRainOverLand(rain, h, n, seaLevel) {
-  let min = Infinity, max = -Infinity;
-
-  for (let i = 0; i < rain.length; i++) {
-    if (h[i] <= seaLevel) continue;
-    const r = rain[i];
-    if (r < min) min = r;
-    if (r > max) max = r;
-  }
-
-  const inv = 1 / (max - min + 1e-9);
-
-  for (let i = 0; i < rain.length; i++) {
-    if (h[i] <= seaLevel) {
-      rain[i] = 1.0;          // океан всегда “мокрый”
-    } else {
-      rain[i] = clamp((rain[i] - min) * inv, 0, 1);
-    }
-  }
-}
-
 
 function drawWindDebug(ctx, wind, n) {
   ctx.clearRect(0, 0, n, n);
@@ -932,7 +989,8 @@ function drawWindDebug(ctx, wind, n) {
       const v = y / (n - 1);
       const w = sampleWindBilinear(wind, u, v);
 
-      const len = 10 + 18 * (w.spd - 0.25) / (1.25 - 0.25);
+      // speed 0.05..1.4: calm belts get short strokes
+      const len = 4 + 22 * w.spd / 1.4;
       const x2 = x + w.vx * len;
       const y2 = y + w.vy * len;
 
@@ -1075,8 +1133,8 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
 	const desertStrength = clamp(opts.desertStrength ?? 0.35, 0, 1);
 	const windGrid = buildWindField(Math.max(96, Math.min(160, (n / 6) | 0)), seed);
 
-    const rain = computeRainWind(h, n, seaLevel, windGrid, desertStrength);
-	normalizeRainOverLand(rain, h, n, seaLevel);
+    // Absolute 0..1 index, no per-map min/max stretch (it used to amplify tiny differences)
+    const rain = computeRain(h, n, seaLevel, temp, windGrid, desertStrength);
 	
 	debugBiomeStats(h, temp, rain, n, seaLevel, desertStrength);
 
