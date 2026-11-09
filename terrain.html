@@ -53,7 +53,7 @@
     </label>
 
     <label>Rivers
-      <input id="rivers" type="number" value="1800">
+      <input id="rivers" type="number" value="600">
     </label>
 	
 	<label>Mountains
@@ -71,13 +71,13 @@
 
 </div>
 
-<script src="/assets/terrain-map.js?v=2"></script>
+<script src="/assets/terrain-map.js?v=7"></script>
 <script>
   function gen() {
     const seed = parseInt(document.getElementById('seed').value, 10) || 6000;
     const size = parseInt(document.getElementById('size').value, 10) || 768;
     let contMin = parseInt(document.getElementById('contMin').value, 10) || 2;
-	let riverThreshold = parseInt(document.getElementById('rivers').value, 10) || 1800;
+	let riverThreshold = parseInt(document.getElementById('rivers').value, 10) || 600;
 	let mountainsStrength = parseFloat(document.getElementById('mount').value) || 0.18;
 	let desertStrength = parseFloat(document.getElementById('desert').value) || 0.35;
     let contMax = parseInt(document.getElementById('contMax').value, 10) || 6;

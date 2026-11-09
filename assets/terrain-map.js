@@ -489,12 +489,21 @@ function sampleHeightNearest(h, n, u, v) {
 
   // -------------------- Hydrology --------------------
 
+  // Priority-Flood + epsilon (Barnes et al. 2014): depressions are filled up to their
+  // spill level, and every filled cell gets a tiny extra rise away from the outlet, so
+  // water keeps flowing across filled areas instead of stopping on a perfect flat.
+  // Returns the filled surface (Float64 so the tiny steps are representable) and
+  // the order cells were processed in (non-decreasing height), used for accumulation.
+  const FILL_EPSILON = 1e-7;
+
   function fillDepressions(h, n) {
     const size = n * n;
     const visited = new Uint8Array(size);
-    const out = new Float32Array(h);
+    const out = Float64Array.from(h);
+    const order = new Int32Array(size);
+    let orderLen = 0;
 
-    const heapH = new Float32Array(size);
+    const heapH = new Float64Array(size);
     const heapI = new Int32Array(size);
     let heapSize = 0;
 
@@ -550,6 +559,7 @@ function sampleHeightNearest(h, n, u, v) {
 
     while (heapSize > 0) {
       const [ch, ci] = heapPop();
+      order[orderLen++] = ci;
       const cx = ci % n;
       const cy = (ci / n) | 0;
 
@@ -561,12 +571,12 @@ function sampleHeightNearest(h, n, u, v) {
         if (visited[ni]) continue;
         visited[ni] = 1;
 
-        if (out[ni] < ch) out[ni] = ch;
+        if (out[ni] <= ch) out[ni] = ch + FILL_EPSILON;
         heapPush(out[ni], ni);
       }
     }
 
-    return out;
+    return { filled: out, order };
   }
 
   function computeFlowDir(h, n) {
@@ -599,19 +609,22 @@ function sampleHeightNearest(h, n, u, v) {
     return down;
   }
 
-  function computeFlowAccum(h, down) {
-    const nCells = h.length;
-    const order = new Int32Array(nCells);
-    for (let i = 0; i < nCells; i++) order[i] = i;
+  // Water a land cell adds to rivers: a little everywhere, much more where it rains.
+  // Average land rain is ~0.4, so a cell gives ~0.65 on average and the Rivers
+  // threshold keeps roughly its old meaning (drainage area in cells).
+  const RUNOFF_BASE = 0.15;
+  const RUNOFF_RAIN = 1.25;
 
-    const ord = Array.from(order);
-    ord.sort((a, b) => h[b] - h[a]);
-
+  // order: cells by non-decreasing filled height (from fillDepressions), so walking it
+  // backwards visits every cell before the lower cell it drains into.
+  // runoff (optional): water each cell contributes; 1 per cell if omitted.
+  function computeFlowAccum(down, order, runoff) {
+    const nCells = down.length;
     const acc = new Float32Array(nCells);
-    for (let i = 0; i < nCells; i++) acc[i] = 1;
+    if (runoff) acc.set(runoff); else acc.fill(1);
 
-    for (let k = 0; k < ord.length; k++) {
-      const i = ord[k];
+    for (let k = order.length - 1; k >= 0; k--) {
+      const i = order[k];
       const d = down[i];
       if (d >= 0) acc[d] += acc[i];
     }
@@ -884,43 +897,244 @@ function sampleHeightNearest(h, n, u, v) {
     if (temp > 0.55) return [35, 120, 75];     // rainforest
     return [55, 120, 95];                      // wet temperate
   }
-function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength) {
+  // -------------------- Atlas style rendering --------------------
+  // Hand-drawn atlas look: muted biome colours with soft borders, elevation as stacked
+  // translucent "ink" layers (like layers in an image editor), very gentle hillshade,
+  // saturated ocean with a light glow along the coast, periwinkle rivers.
+
+  const ATLAS = {
+    lowland: [214, 230, 178],      // height mode base (no biomes)
+    ink: [96, 102, 62],            // elevation layers
+    inkAlpha: 0.15,
+    inkEdge: 0.10,                 // extra darkening on each layer's rim
+    layers: [0.08, 0.18, 0.30, 0.44, 0.60, 0.78],
+    snow: [238, 238, 244],
+    oceanDeep: [22, 44, 128],
+    oceanMid: [38, 82, 172],
+    oceanShelf: [84, 140, 214],
+    glow: [176, 222, 236],         // wide soft halo in the water
+    rim: [236, 244, 214],          // narrow bright line at the shore
+    shore: [226, 232, 190],        // pale edge on the land side
+    river: [104, 118, 222],
+    lake: [150, 160, 240],
+  };
+
+  // Seabed depth as a share of sea level. Measured near coasts: 1-3 px out the median
+  // depth is ~0.03, 8-12 px out it ranges ~0.08..0.28, so the shelf width varies a lot.
+  const SHALLOW_DEPTH = 0.025;   // bright shallows
+  const SHELF_FULL_DEPTH = 0.02; // shelf glow at full strength above this depth
+  const SHELF_EDGE_DEPTH = 0.14; // and gone below this depth
+
+  const LAKE_MIN_DEPTH = 0.004; // filled depth (height units) to count as a lake
+  const LAKE_MIN_RAIN = 0.3;    // drier basins stay dry
+  const LAKE_MIN_AREA = 30;     // pixels at size 768 (scaled with map area); smaller ones are noise
+
+  // Remove connected regions (8-neighbour) smaller than minArea from a 0/1 mask
+  function dropSmallRegions(mask, n, minArea) {
+    const seen = new Uint8Array(mask.length);
+    const stack = new Int32Array(mask.length);
+    const region = [];
+    for (let s = 0; s < mask.length; s++) {
+      if (!mask[s] || seen[s]) continue;
+      let top = 0;
+      stack[top++] = s;
+      seen[s] = 1;
+      region.length = 0;
+      while (top > 0) {
+        const i = stack[--top];
+        region.push(i);
+        const x = i % n, y = (i / n) | 0;
+        for (let k = 0; k < 8; k++) {
+          const nx = x + N8[k][0], ny = y + N8[k][1];
+          if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+          const j = idx(nx, ny, n);
+          if (mask[j] && !seen[j]) { seen[j] = 1; stack[top++] = j; }
+        }
+      }
+      if (region.length < minArea) for (const i of region) mask[i] = 0;
+    }
+  }
+
+  const ATLAS_BIOMES = {
+    1: [226, 212, 164],  // hot desert
+    2: [208, 204, 170],  // semi-arid / cold desert
+    3: [216, 216, 150],  // savanna
+    4: [152, 174, 142],  // taiga
+    5: [188, 192, 168],  // cold dry
+    6: ATLAS.snow,       // snow
+    7: [202, 220, 158],  // steppe
+    8: [164, 198, 130],  // seasonal forest
+    9: [146, 184, 124],  // temperate forest
+    10: [120, 164, 112], // rainforest
+    11: [132, 172, 128], // wet temperate
+  };
+
+  function smoothstep01(a, b, x) {
+    const t = clamp((x - a) / (b - a), 0, 1);
+    return t * t * (3 - 2 * t);
+  }
+
+  // Box blur into a new array with clamped edges.
+  // (boxBlur above never removes the edge copies it adds at the start of each row/column,
+  // which shifts whole rows/columns by the edge value; it is kept as is only because
+  // the uplift map, and therefore every existing seed, depends on it.)
+  function blurred(src, n, radius) {
+    const r = Math.max(0, radius | 0);
+    if (r === 0) return Float32Array.from(src);
+    const tmp = new Float32Array(src.length);
+    const out = new Float32Array(src.length);
+    const inv = 1 / (2 * r + 1);
+
+    for (let y = 0; y < n; y++) {
+      const row = y * n;
+      let sum = 0;
+      for (let k = -r; k <= r; k++) sum += src[row + clamp(k, 0, n - 1)];
+      for (let x = 0; x < n; x++) {
+        tmp[row + x] = sum * inv;
+        sum += src[row + Math.min(x + r + 1, n - 1)] - src[row + Math.max(x - r, 0)];
+      }
+    }
+    for (let x = 0; x < n; x++) {
+      let sum = 0;
+      for (let k = -r; k <= r; k++) sum += tmp[clamp(k, 0, n - 1) * n + x];
+      for (let y = 0; y < n; y++) {
+        out[y * n + x] = sum * inv;
+        sum += tmp[Math.min(y + r + 1, n - 1) * n + x] - tmp[Math.max(y - r, 0) * n + x];
+      }
+    }
+    return out;
+  }
+
+function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf) {
   const img = ctx.createImageData(n, n);
   const data = img.data;
+  const N = n * n;
+  const px = n / 768; // scale effects with map size
 
-  let accMax = 1;
-  for (let i = 0; i < acc.length; i++) if (acc[i] > accMax) accMax = acc[i];
+  // Lakes: filled depressions that are deep enough and not in dry climates
+  // (in deserts they stay dry basins). Soft edge via a light blur.
+  const lake = new Float32Array(N);
+  if (hf) {
+    for (let i = 0; i < N; i++) {
+      if (h[i] <= seaLevel) continue;
+      const depth = hf[i] - h[i];
+      if (depth > LAKE_MIN_DEPTH && rain[i] > LAKE_MIN_RAIN) lake[i] = 1;
+    }
+    dropSmallRegions(lake, n, Math.round(LAKE_MIN_AREA * px * px));
+  }
+  const lakeSoft = blurred(lake, n, Math.max(1, Math.round(1 * px)));
+
+  // Rivers: strength 0..1 by log flow above the threshold, plus a soft halo so big
+  // rivers read wider downstream
+  let accMaxLand = 1;
+  for (let i = 0; i < N; i++) if (h[i] > seaLevel && acc[i] > accMaxLand) accMaxLand = acc[i];
+  const logThr0 = Math.log(Math.max(2, riverThreshold));
+  const logMax0 = Math.log(accMaxLand + 1e-9);
+  const river = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    if (h[i] <= seaLevel || acc[i] <= riverThreshold || lake[i]) continue;
+    river[i] = 0.35 + 0.65 * clamp((Math.log(acc[i]) - logThr0) / (logMax0 - logThr0 + 1e-9), 0, 1);
+  }
+  const riverWide = blurred(river, n, Math.max(1, Math.round(1 * px)));
+
+  // Land mask and per-pixel base colour
+  const land = new Float32Array(N);
+  const R = new Float32Array(N), G = new Float32Array(N), B = new Float32Array(N);
+  const snow = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    if (h[i] <= seaLevel) continue;
+    land[i] = 1;
+    const c = mode === 'height' ? ATLAS.lowland : (ATLAS_BIOMES[biomeIds[i]] || ATLAS.lowland);
+    R[i] = c[0]; G[i] = c[1]; B[i] = c[2];
+    if (mode !== 'height' && biomeIds[i] === 6) snow[i] = 1;
+  }
+
+  // Soft biome borders: blur colours over land only (weighted by the land mask)
+  const rBorder = Math.max(1, Math.round(3 * px));
+  const wL = blurred(land, n, rBorder);
+  const bR = blurred(R, n, rBorder), bG = blurred(G, n, rBorder), bB = blurred(B, n, rBorder);
+  const snowSoft = blurred(snow, n, rBorder);
+
+  // Smoothed height for the elevation layers (soft, rounded contours)
+  const hs = blurred(h, n, Math.max(1, Math.round(4 * px)));
+
+  // Shelf: driven by the real seabed depth, not by distance to the coast, so it is wide
+  // where the bottom is shallow far out and almost absent off steep coasts.
+  // depth = (sea - h) / sea; lightly smoothed so contours are soft.
+  const hSea = blurred(h, n, Math.max(1, Math.round(2 * px)));
+  const shelf = new Float32Array(N);   // 0..1, 1 = very shallow
+  const shallow = new Float32Array(N); // 0..1, the brightest near-zero depths
+  for (let i = 0; i < N; i++) {
+    if (land[i]) continue;
+    const depth = clamp((seaLevel - hSea[i]) / (seaLevel + 1e-9), 0, 1);
+    shelf[i] = 1 - smoothstep01(SHELF_FULL_DEPTH, SHELF_EDGE_DEPTH, depth);
+    shallow[i] = 1 - smoothstep01(0, SHALLOW_DEPTH, depth);
+  }
+  // On land: how shallow the nearby water is (beaches on shallow coasts only),
+  // and how close the water is
+  const nearShelf = blurred(shelf, n, Math.max(1, Math.round(3 * px)));
+  const nearWater = blurred(land, n, Math.max(1, Math.round(3 * px)));
+
 
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
       const i = idx(x, y, n);
-      const height = h[i];
+      let r, g, b;
 
-      let rgb;
-      if (mode === 'height') rgb = heightColor(height, seaLevel);
-      else rgb = biomeIdToColor(biomeIds[i], height, seaLevel);
+      if (!land[i]) {
+        // Ocean: depth gradient + coastal glow
+        const depth = clamp((seaLevel - h[i]) / (seaLevel + 1e-9), 0, 1);
+        const t = Math.pow(depth, 0.7);
+        const c1 = t < 0.5 ? ATLAS.oceanShelf : ATLAS.oceanMid;
+        const c2 = t < 0.5 ? ATLAS.oceanMid : ATLAS.oceanDeep;
+        const k = t < 0.5 ? t * 2 : (t - 0.5) * 2;
+        r = lerp(c1[0], c2[0], k); g = lerp(c1[1], c2[1], k); b = lerp(c1[2], c2[2], k);
 
-      let [r, g, b] = rgb;
+        const halo = Math.pow(shelf[i], 1.3) * 0.8;
+        r = lerp(r, ATLAS.glow[0], halo); g = lerp(g, ATLAS.glow[1], halo); b = lerp(b, ATLAS.glow[2], halo);
+        const rim = Math.pow(shallow[i], 1.5) * 0.85;
+        r = lerp(r, ATLAS.rim[0], rim); g = lerp(g, ATLAS.rim[1], rim); b = lerp(b, ATLAS.rim[2], rim);
+      } else {
+        const w = wL[i] > 1e-6 ? 1 / wL[i] : 0;
+        r = bR[i] * w; g = bG[i] * w; b = bB[i] * w;
 
-      const sh = hillshade(h, n, x, y);
-      const shade = 0.55 + 0.45 * sh;
-      r = (r * shade) | 0;
-      g = (g * shade) | 0;
-      b = (b * shade) | 0;
+        // Elevation: each band is a translucent ink layer with a soft, slightly darker rim
+        const alt = clamp((hs[i] - seaLevel) / (1 - seaLevel + 1e-9), 0, 1);
+        const inkK = 1 - 0.75 * snowSoft[i]; // keep snow fields light
+        for (const level of ATLAS.layers) {
+          const cover = smoothstep01(level - 0.012, level + 0.012, alt);
+          if (cover <= 0) break;
+          const edge = cover * (1 - cover) * 4;
+          const a = (ATLAS.inkAlpha * cover + ATLAS.inkEdge * edge) * inkK;
+          r = lerp(r, ATLAS.ink[0], a); g = lerp(g, ATLAS.ink[1], a); b = lerp(b, ATLAS.ink[2], a);
+        }
 
-      if (height > seaLevel && acc[i] > riverThreshold) {
-        const t = Math.log(acc[i]) / Math.log(accMax + 1e-9);
-        const w = clamp((t - 0.25) * 2.0, 0, 1);
-        const rr = 30, rg = 90, rb = 160;
-        r = lerp(r, rr, 0.55 + 0.35 * w) | 0;
-        g = lerp(g, rg, 0.55 + 0.35 * w) | 0;
-        b = lerp(b, rb, 0.55 + 0.35 * w) | 0;
+        // Very gentle relief (flat ground has hillshade ~0.7)
+        const sh = hillshade(h, n, x, y);
+        const shade = clamp(1 + (sh - 0.7) * 0.35, 0.85, 1.08);
+        r *= shade; g *= shade; b *= shade;
+
+        // Pale edge along the shore
+        const shoreK = (1 - smoothstep01(0.55, 0.95, nearWater[i])) * 0.55 * clamp(nearShelf[i] * 2.5, 0, 1);
+        r = lerp(r, ATLAS.shore[0], shoreK); g = lerp(g, ATLAS.shore[1], shoreK); b = lerp(b, ATLAS.shore[2], shoreK);
+
+        // Lakes
+        if (lakeSoft[i] > 0) {
+          const a = smoothstep01(0.15, 0.6, lakeSoft[i]) * 0.92;
+          r = lerp(r, ATLAS.lake[0], a); g = lerp(g, ATLAS.lake[1], a); b = lerp(b, ATLAS.lake[2], a);
+        }
+
+        // Rivers: the core line, and a wider soft band for strong rivers
+        const rv = Math.max(river[i] * 0.95, clamp(riverWide[i] * 2.2 - 0.25, 0, 1) * 0.8);
+        if (rv > 0) {
+          r = lerp(r, ATLAS.river[0], rv); g = lerp(g, ATLAS.river[1], rv); b = lerp(b, ATLAS.river[2], rv);
+        }
       }
 
       const o = i * 4;
-      data[o + 0] = r;
-      data[o + 1] = g;
-      data[o + 2] = b;
+      data[o + 0] = clamp(r, 0, 255) | 0;
+      data[o + 1] = clamp(g, 0, 255) | 0;
+      data[o + 2] = clamp(b, 0, 255) | 0;
       data[o + 3] = 255;
     }
   }
@@ -1083,7 +1297,7 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
     const n = opts.size || 768;
     const seed = (opts.seed ?? 1337) | 0;
     const seaLevel = clamp(opts.seaLevel ?? 0.50, 0.05, 0.95);
-    const riverThreshold = opts.riverThreshold ?? 1800;
+    const riverThreshold = opts.riverThreshold ?? 600;
 
     const continentsMin = opts.continentsMin ?? 2;
     const continentsMax = opts.continentsMax ?? 6;
@@ -1121,21 +1335,23 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
     // 3) Erosion (light) after tectonics
     thermalErode(h, n, 7, 0.017);
 
-    // 4) Fill depressions for drainage
-    const hf = fillDepressions(h, n);
-
-    // 5) Hydrology
-    const down = computeFlowDir(hf, n);
-    const acc = computeFlowAccum(hf, down);
-
-    // 6) Climate
+    // 4) Climate (before hydrology: river flow depends on rain)
     const temp = computeTemperature(h, n, seaLevel);
 	const desertStrength = clamp(opts.desertStrength ?? 0.35, 0, 1);
 	const windGrid = buildWindField(Math.max(96, Math.min(160, (n / 6) | 0)), seed);
 
     // Absolute 0..1 index, no per-map min/max stretch (it used to amplify tiny differences)
     const rain = computeRain(h, n, seaLevel, temp, windGrid, desertStrength);
-	
+
+    // 5) Hydrology: fill depressions (with a tiny slope), D8 flow, rain-weighted accumulation
+    const { filled: hf, order: flowOrder } = fillDepressions(h, n);
+    const down = computeFlowDir(hf, n);
+    const runoff = new Float32Array(n * n);
+    for (let i = 0; i < runoff.length; i++) {
+      runoff[i] = h[i] > seaLevel ? RUNOFF_BASE + RUNOFF_RAIN * rain[i] : 0;
+    }
+    const acc = computeFlowAccum(down, flowOrder, runoff);
+
 	debugBiomeStats(h, temp, rain, n, seaLevel, desertStrength);
 
     // 7) Draw	
@@ -1152,7 +1368,7 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
 	}
 	smoothBiomeIds(biomeIds, h, n, seaLevel, 3);
 
-drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength);
+drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf);
 	
   }
 
