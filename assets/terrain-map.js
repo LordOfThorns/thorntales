@@ -266,189 +266,273 @@ function sampleHeightNearest(h, n, u, v) {
       const vx = Math.cos(ang) * spd;
       const vy = Math.sin(ang) * spd;
 
-      // oceanic vs continental tendency (affects baseline uplift a bit)
+      // oceanic vs continental tendency (decides which side of a collision gets the range)
       const type = rng() < 0.55 ? 0 : 1; // 0 oceanic, 1 continental
       p.push({ x, y, vx, vy, type });
     }
     return p;
   }
 
-  // For each cell: nearest plate id and second nearest distance for boundary strength.
-  function computePlateFields(n, plates) {
+  // For each cell: nearest plate A, second nearest B and the exact distance to the
+  // A|B Voronoi edge. The lookup position is domain-warped so plate edges curve
+  // instead of being straight segments.
+  const PLATE_WARP = 0.10;
+
+  function computePlateFields(n, plates, seed) {
     const ids = new Int16Array(n * n);
-    const d2min = new Float32Array(n * n);
-    const d2second = new Float32Array(n * n);
+    const ids2 = new Int16Array(n * n);
+    const edge = new Float32Array(n * n);
+
+    for (let y = 0; y < n; y++) {
+      const v0 = y / (n - 1);
+      for (let x = 0; x < n; x++) {
+        const u0 = x / (n - 1);
+        const u = u0 + (fbm(u0 * 3, v0 * 3, seed + 610, 3, 2.0, 0.5) - 0.5) * 2 * PLATE_WARP;
+        const v = v0 + (fbm(u0 * 3, v0 * 3, seed + 611, 3, 2.0, 0.5) - 0.5) * 2 * PLATE_WARP;
+
+        let a = 0, b = 0, da = Infinity, db = Infinity;
+        for (let k = 0; k < plates.length; k++) {
+          const dx = u - plates[k].x;
+          const dy = v - plates[k].y;
+          const d2 = dx * dx + dy * dy;
+          if (d2 < da) { db = da; b = a; da = d2; a = k; }
+          else if (d2 < db) { db = d2; b = k; }
+        }
+
+        const i = idx(x, y, n);
+        ids[i] = a;
+        ids2[i] = b;
+        // distance from p to the perpendicular bisector of A and B
+        const A = plates[a], B = plates[b];
+        const ab = Math.hypot(B.x - A.x, B.y - A.y) + 1e-9;
+        edge[i] = (db - da) / (2 * ab);
+      }
+    }
+
+    return { ids, ids2, edge };
+  }
+
+  // Ridged multifractal noise: sharp crests with valleys between them, 0..~1
+  function ridged(x, y, seed, octaves) {
+    let sum = 0, amp = 0.5, freq = 1, weight = 1, norm = 0;
+    for (let o = 0; o < octaves; o++) {
+      let r = 1 - Math.abs(2 * valueNoise2(x * freq, y * freq, seed + o * 131) - 1);
+      r *= r;
+      r *= weight;
+      weight = clamp(r * 1.6, 0, 1);
+      sum += r * amp;
+      norm += amp;
+      amp *= 0.5;
+      freq *= 2.03;
+    }
+    return sum / norm;
+  }
+
+  // Mountain/rift field along plate edges, roughly -0.5..1.2 (not normalised:
+  // collision strength matters). Profiles depend on the kind of boundary:
+  //   convergent, both continental:  wide range centred on the edge
+  //   convergent, mixed:             range on the continental side, trench on the other
+  //   divergent:                     rift valley (negative), slight shoulders
+  //   transform (sliding):           low broken hills
+  // Inside a belt, ridged noise makes separate crests, peaks and passes, and the belt
+  // strength changes along the edge, so ranges have gaps and high sections.
+  function buildUpliftMap(n, plates, plateFields, seed) {
+    const { ids, ids2, edge } = plateFields;
+    const uplift = new Float32Array(n * n);
 
     for (let y = 0; y < n; y++) {
       const v = y / (n - 1);
       for (let x = 0; x < n; x++) {
         const u = x / (n - 1);
+        const i = idx(x, y, n);
+        const d = edge[i];
+        if (d > 0.16) continue;
 
-        let bestId = 0;
-        let best = Infinity;
-        let second = Infinity;
+        const A = plates[ids[i]], B = plates[ids2[i]];
+        let nx = B.x - A.x, ny = B.y - A.y;
+        const inv = 1 / (Math.hypot(nx, ny) + 1e-9);
+        nx *= inv; ny *= inv;
+        const rvx = B.vx - A.vx, rvy = B.vy - A.vy;
+        const conv = -(rvx * nx + rvy * ny);          // > 0 plates collide
+        const shear = Math.abs(rvx * -ny + rvy * nx);
 
-        for (let k = 0; k < plates.length; k++) {
-          const dx = u - plates[k].x;
-          const dy = v - plates[k].y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 < best) {
-            second = best;
-            best = d2;
-            bestId = k;
-          } else if (d2 < second) {
-            second = d2;
+        // belt strength and width vary along the edge
+        const along = fbm(u * 5, v * 5, seed + 520, 3, 2.0, 0.5);       // ~0.2..0.8
+        const strength = clamp((along - 0.25) * 2.2, 0.15, 1.3);
+        const width = 0.035 + 0.03 * fbm(u * 4, v * 4, seed + 521, 2, 2.0, 0.5);
+
+        // crest detail; warped so ridges are not grid aligned
+        const wu = u + (fbm(u * 6, v * 6, seed + 530, 2, 2.0, 0.5) - 0.5) * 0.05;
+        const wv = v + (fbm(u * 6, v * 6, seed + 531, 2, 2.0, 0.5) - 0.5) * 0.05;
+        const crest = ridged(wu * 22, wv * 22, seed + 540, 5);         // ~0..1, crests ~10-30 px apart
+
+        let up = 0;
+        if (conv > 0.05) {
+          let center = 0;
+          if (A.type === 1 && B.type === 0) center = width * 0.9;      // range inland on A
+          const t = (d - center) / width;
+          const env = Math.exp(-t * t);
+          const both = A.type === 1 && B.type === 1 ? 1.35 : 1;        // continental collision
+          up += conv * strength * both * env * (0.25 + 1.15 * crest);
+          if (A.type === 0 && B.type === 1) {
+            up -= conv * 0.3 * Math.exp(-Math.pow(d / (width * 0.9), 2));   // trench
           }
+        } else if (conv < -0.05) {
+          const t = d / (width * 0.6);
+          up += conv * 0.18 * Math.exp(-t * t);                        // rift valley (conv < 0); sometimes a rift lake
+          const s = (d - width * 0.9) / (width * 0.5);
+          up += -conv * 0.12 * Math.exp(-s * s) * (0.5 + crest);       // rift shoulders
         }
+        const tt = d / (width * 0.7);
+        up += shear * 0.12 * Math.exp(-tt * tt) * crest;               // transform hills
 
-        const i = idx(x, y, n);
-        ids[i] = bestId;
-        d2min[i] = best;
-        d2second[i] = second;
+        uplift[i] = up;
       }
     }
 
-    return { ids, d2min, d2second };
+    const out = blurred(uplift, n, Math.max(1, Math.round(n / 384)));
+
+    // Normalise by the top 1% of uplift, so the Mountains slider sets peak height
+    // predictably (the raw value is a product of several random factors, ~0.2 typical)
+    const pos = [];
+    for (let i = 0; i < out.length; i += 3) if (out[i] > 0) pos.push(out[i]);
+    pos.sort((a, b) => a - b);
+    const p99 = pos.length ? pos[Math.floor(pos.length * 0.99)] : 1;
+    const inv = 1 / Math.max(p99, 1e-6);
+    // rifts and trenches stay shallow: lowlands are only ~0.07..0.17 above the sea
+    for (let i = 0; i < out.length; i++) {
+      const v = out[i] * inv;
+      out[i] = v > 0 ? Math.min(v, 1.3) : Math.max(v * 0.35, -0.3);
+    }
+    return out;
   }
 
-  // Build uplift map: mountains on convergent boundaries, rifts on divergent.
-  function buildUpliftMap(n, plates, plateFields, seed) {
-    const { ids, d2min, d2second } = plateFields;
-    const uplift = new Float32Array(n * n);
-
-    // boundary strength based on how close 1st/2nd nearest are (Voronoi edge)
-    // smaller gap -> stronger boundary
-    for (let y = 1; y < n - 1; y++) {
-      for (let x = 1; x < n - 1; x++) {
-        const i = idx(x, y, n);
-        const idA = ids[i];
-
-        // detect if near boundary: neighbour has different plate id
-        let idB = idA;
-        for (let k = 0; k < 8; k++) {
-          const j = idx(x + N8[k][0], y + N8[k][1], n);
-          if (ids[j] !== idA) { idB = ids[j]; break; }
-        }
-
-        if (idB === idA) continue;
-
-        const A = plates[idA];
-        const B = plates[idB];
-
-        // boundary weight: 0..1
-		const f1 = Math.sqrt(d2min[i]);
-		const f2 = Math.sqrt(d2second[i]);
-		const df = Math.max(1e-6, f2 - f1); // чем меньше, тем ближе к границе
-
-		// ширина границы в "долях карты" (подбирается)
-		const width = 0.020; // попробуй 0.015..0.030
-		let bw = clamp(1.0 - (df / width), 0, 1);
-
-		// сделаем профиль “горного пояса” более естественным
-		bw = bw * bw; // или bw = Math.pow(bw, 2.0);
-
-        if (bw <= 0) continue;
-
-        // boundary normal approx: from A to B
-        const px = x / (n - 1);
-        const py = y / (n - 1);
-        // use vector between plate centers as proxy for boundary normal
-        let nx = B.x - A.x;
-        let ny = B.y - A.y;
-        const invn = 1 / (Math.sqrt(nx * nx + ny * ny) + 1e-9);
-        nx *= invn; ny *= invn;
-
-        // relative velocity
-        const rvx = B.vx - A.vx;
-        const rvy = B.vy - A.vy;
-
-        // convergence positive if moving towards each other along normal
-        const conv = -(rvx * nx + rvy * ny); // >0 convergent, <0 divergent
-
-        // shear magnitude (transform faults)
-        const shear = Math.abs(rvx * (-ny) + rvy * nx);
-
-        // convert to uplift
-        let u = 0;
-
-        if (conv > 0) {
-          // mountains
-          u += conv * 0.9;
-          // continental-continental more mountainy
-          if (A.type === 1 && B.type === 1) u *= 1.15;
-        } else {
-          // rifts / trenches (negative)
-          u += conv * 0.45; // conv is negative
-          // oceanic divergence tends to create mid-ocean ridges, keep small negative
-          if (A.type === 0 && B.type === 0) u *= 0.6;
-        }
-
-        // shear adds slight roughness
-        u += shear * 0.18;
-
-        // add some noise so boundaries aren’t perfect lines
-        const nu = fbm(px * 10.0, py * 10.0, seed + 500, 3, 2.0, 0.5) - 0.5;
-        u *= (0.85 + nu * 0.3);
-
-        uplift[i] = u * bw;
-      }
+  // A plate counts as continental when enough of it is land in the base heightmap,
+  // so collisions and coastal ranges happen where the continents actually are.
+  function assignPlateTypes(plates, plateFields, h, seaLevel) {
+    const land = new Float64Array(plates.length);
+    const all = new Float64Array(plates.length);
+    for (let i = 0; i < h.length; i += 3) {
+      const id = plateFields.ids[i];
+      all[id]++;
+      if (h[i] > seaLevel) land[id]++;
     }
-
-    // blur a bit to spread ridges
-    boxBlur(uplift, n, 4);
-	boxBlur(uplift, n, 2);
-
-    // normalise uplift into roughly [-1,1] (preserve sign)
-    let maxAbs = 1e-6;
-    for (let i = 0; i < uplift.length; i++) {
-      const a = Math.abs(uplift[i]);
-      if (a > maxAbs) maxAbs = a;
+    for (let k = 0; k < plates.length; k++) {
+      plates[k].type = all[k] > 0 && land[k] / all[k] > 0.3 ? 1 : 0;
     }
-    const inv = 1 / maxAbs;
-    for (let i = 0; i < uplift.length; i++) uplift[i] *= inv;
-
-    return uplift;
   }
 
-  function boxBlur(a, n, radius) {
-    if (radius <= 0) return;
-    const tmp = new Float32Array(a.length);
-    const r = radius;
+  // Box blur into a new array with clamped edges
+  function blurred(src, n, radius) {
+    const r = Math.max(0, radius | 0);
+    if (r === 0) return Float32Array.from(src);
+    const tmp = new Float32Array(src.length);
+    const out = new Float32Array(src.length);
+    const inv = 1 / (2 * r + 1);
 
-    // horizontal
     for (let y = 0; y < n; y++) {
+      const row = y * n;
       let sum = 0;
-      for (let x = -r; x <= r; x++) {
-        const xx = clamp(x, 0, n - 1);
-        sum += a[idx(xx, y, n)];
-      }
+      for (let k = -r; k <= r; k++) sum += src[row + clamp(k, 0, n - 1)];
       for (let x = 0; x < n; x++) {
-        tmp[idx(x, y, n)] = sum / (r * 2 + 1);
-        const xOut = x - r;
-        const xIn = x + r + 1;
-        if (xOut >= 0) sum -= a[idx(xOut, y, n)];
-        if (xIn < n) sum += a[idx(xIn, y, n)];
+        tmp[row + x] = sum * inv;
+        sum += src[row + Math.min(x + r + 1, n - 1)] - src[row + Math.max(x - r, 0)];
       }
     }
-
-    // vertical
     for (let x = 0; x < n; x++) {
       let sum = 0;
-      for (let y = -r; y <= r; y++) {
-        const yy = clamp(y, 0, n - 1);
-        sum += tmp[idx(x, yy, n)];
-      }
+      for (let k = -r; k <= r; k++) sum += tmp[clamp(k, 0, n - 1) * n + x];
       for (let y = 0; y < n; y++) {
-        a[idx(x, y, n)] = sum / (r * 2 + 1);
-        const yOut = y - r;
-        const yIn = y + r + 1;
-        if (yOut >= 0) sum -= tmp[idx(x, yOut, n)];
-        if (yIn < n) sum += tmp[idx(x, yIn, n)];
+        out[y * n + x] = sum * inv;
+        sum += tmp[Math.min(y + r + 1, n - 1) * n + x] - tmp[Math.max(y - r, 0) * n + x];
+      }
+    }
+    return out;
+  }
+
+  // -------------------- Relief on land --------------------
+  // The continent field defines the coastline only. Its inland part is compressed into
+  // lowlands/plateaus (a shelf instead of a dome), then hills and mountains are added.
+  const PLAINS_HEIGHT = 0.07;   // how high inland lowlands get above the sea
+  const PLAINS_SCALE = 0.05;    // how fast land rises from the coast to that level
+  const PLATEAU_HEIGHT = 0.10;  // broad uplands in some regions
+  const HILLS_HEIGHT = 0.07;
+
+  const MOUNTAINS_SCALE = 3.0;   // normalised uplift (top 1% = 1) x Mountains slider (0.18) x this
+  const MOUNTAINS_AT_SEA = 0.25;
+
+  function shapeLand(h, n, seed, seaLevel) {
+    for (let y = 0; y < n; y++) {
+      const v = y / (n - 1);
+      for (let x = 0; x < n; x++) {
+        const u = x / (n - 1);
+        const i = idx(x, y, n);
+        const e = h[i] - seaLevel;
+        if (e <= 0) continue;
+        const coastRise = 1 - Math.exp(-e / PLAINS_SCALE);             // 0 at coast -> 1 inland
+        const plateau = smoothstep(clamp((fbm(u * 2.5, v * 2.5, seed + 700, 3, 2.0, 0.5) - 0.45) * 4, 0, 1));
+        const hillMask = smoothstep(clamp((fbm(u * 4, v * 4, seed + 710, 2, 2.0, 0.5) - 0.4) * 3, 0, 1));
+        const hills = ridged(u * 16, v * 16, seed + 720, 4);
+        h[i] = seaLevel + coastRise * (PLAINS_HEIGHT + PLATEAU_HEIGHT * plateau + HILLS_HEIGHT * hillMask * hills);
       }
     }
   }
 
   // -------------------- Erosion --------------------
+
+  // Stream-power erosion: each pass routes water over the terrain and lowers every land
+  // cell by k * sqrt(flow) * slope towards the cell it drains into. Big streams cut
+  // valleys, the land left between them becomes sharp, branching ridges. On flat
+  // lowlands the slope is ~0, so they barely change.
+  const STREAM_ERODE_PASSES = 4;
+  const STREAM_ERODE_K = 0.15;   // upper slopes: flow ~1..100 cells, slope ~0.005
+
+  // Erosion is computed at half resolution (4x cheaper) and the removed material is
+  // applied to the full map with bilinear interpolation, which also softens D8 steps.
+  function streamErodeHalf(h, n, seaLevel, passes, k) {
+    if (n < 384) { streamErode(h, n, seaLevel, passes, k); return; }
+    const m = n >> 1;
+    const small = new Float32Array(m * m);
+    for (let y = 0; y < m; y++) {
+      for (let x = 0; x < m; x++) {
+        const i = idx(x * 2, y * 2, n);
+        small[idx(x, y, m)] = (h[i] + h[i + 1] + h[i + n] + h[i + n + 1]) * 0.25;
+      }
+    }
+    const before = Float32Array.from(small);
+    // k is per cell; at half resolution cells are twice as long, flow counts 4x smaller
+    streamErode(small, m, seaLevel, passes, k * 1.4);
+    for (let y = 0; y < n; y++) {
+      const v = clamp((y + 0.5) / 2 - 0.5, 0, m - 1);
+      const y0 = Math.floor(v), y1 = Math.min(y0 + 1, m - 1), ty = v - y0;
+      for (let x = 0; x < n; x++) {
+        const i = idx(x, y, n);
+        if (h[i] <= seaLevel) continue;
+        const u = clamp((x + 0.5) / 2 - 0.5, 0, m - 1);
+        const x0 = Math.floor(u), x1 = Math.min(x0 + 1, m - 1), tx = u - x0;
+        const d = (a, b) => small[idx(a, b, m)] - before[idx(a, b, m)];
+        const delta = lerp(lerp(d(x0, y0), d(x1, y0), tx), lerp(d(x0, y1), d(x1, y1), tx), ty);
+        h[i] = Math.max(seaLevel + 1e-4, h[i] + delta);
+      }
+    }
+  }
+
+  function streamErode(h, n, seaLevel, passes, k) {
+    for (let p = 0; p < passes; p++) {
+      const { filled, order } = fillDepressions(h, n);
+      const down = computeFlowDir(filled, n);
+      const acc = computeFlowAccum(down, order);
+      for (let i = 0; i < h.length; i++) {
+        const j = down[i];
+        if (j < 0 || h[i] <= seaLevel) continue;
+        const drop = h[i] - h[j];
+        if (drop <= 0) continue;
+        const dist = (i % n !== j % n) && (((i / n) | 0) !== ((j / n) | 0)) ? 1.414 : 1;
+        const e = k * Math.sqrt(acc[i]) * (drop / dist);
+        h[i] -= Math.min(e, drop * 0.9);
+      }
+    }
+  }
 
   function thermalErode(h, n, iterations, talus) {
     const tmp = new Float32Array(h.length);
@@ -903,10 +987,9 @@ function sampleHeightNearest(h, n, u, v) {
   // saturated ocean with a light glow along the coast, periwinkle rivers.
 
   const ATLAS = {
-    lowland: [214, 230, 178],      // height mode base (no biomes)
-    ink: [96, 102, 62],            // elevation layers
-    inkAlpha: 0.15,
-    inkEdge: 0.10,                 // extra darkening on each layer's rim
+    lowland: [204, 224, 164],      // height mode base (no biomes)
+    ink: [72, 74, 46],             // elevation layers
+    inkAlpha: 0.13,
     layers: [0.08, 0.18, 0.30, 0.44, 0.60, 0.78],
     snow: [238, 238, 244],
     oceanDeep: [22, 44, 128],
@@ -956,56 +1039,31 @@ function sampleHeightNearest(h, n, u, v) {
   }
 
   const ATLAS_BIOMES = {
-    1: [226, 212, 164],  // hot desert
-    2: [208, 204, 170],  // semi-arid / cold desert
-    3: [216, 216, 150],  // savanna
-    4: [152, 174, 142],  // taiga
-    5: [188, 192, 168],  // cold dry
+    1: [232, 205, 140],  // hot desert
+    2: [206, 193, 152],  // semi-arid / cold desert
+    3: [206, 204, 118],  // savanna
+    4: [94, 132, 104],   // taiga
+    5: [172, 176, 152],  // cold dry
     6: ATLAS.snow,       // snow
-    7: [202, 220, 158],  // steppe
-    8: [164, 198, 130],  // seasonal forest
-    9: [146, 184, 124],  // temperate forest
-    10: [120, 164, 112], // rainforest
-    11: [132, 172, 128], // wet temperate
+    7: [184, 206, 130],  // steppe
+    8: [120, 168, 94],   // seasonal forest
+    9: [94, 148, 88],    // temperate forest
+    10: [64, 128, 80],   // rainforest
+    11: [86, 140, 102],  // wet temperate
   };
+
+  // Border character changes across the map: in some regions borders are crisp and
+  // ragged, in others soft. BORDER_JAG_* is how far (px at 768) colours are pulled
+  // from neighbouring points, which makes edges ragged instead of smooth curves.
+  const BORDER_JAG_LARGE = 6;
+  const BORDER_JAG_SMALL = 2.5;
 
   function smoothstep01(a, b, x) {
     const t = clamp((x - a) / (b - a), 0, 1);
     return t * t * (3 - 2 * t);
   }
 
-  // Box blur into a new array with clamped edges.
-  // (boxBlur above never removes the edge copies it adds at the start of each row/column,
-  // which shifts whole rows/columns by the edge value; it is kept as is only because
-  // the uplift map, and therefore every existing seed, depends on it.)
-  function blurred(src, n, radius) {
-    const r = Math.max(0, radius | 0);
-    if (r === 0) return Float32Array.from(src);
-    const tmp = new Float32Array(src.length);
-    const out = new Float32Array(src.length);
-    const inv = 1 / (2 * r + 1);
-
-    for (let y = 0; y < n; y++) {
-      const row = y * n;
-      let sum = 0;
-      for (let k = -r; k <= r; k++) sum += src[row + clamp(k, 0, n - 1)];
-      for (let x = 0; x < n; x++) {
-        tmp[row + x] = sum * inv;
-        sum += src[row + Math.min(x + r + 1, n - 1)] - src[row + Math.max(x - r, 0)];
-      }
-    }
-    for (let x = 0; x < n; x++) {
-      let sum = 0;
-      for (let k = -r; k <= r; k++) sum += tmp[clamp(k, 0, n - 1) * n + x];
-      for (let y = 0; y < n; y++) {
-        out[y * n + x] = sum * inv;
-        sum += tmp[Math.min(y + r + 1, n - 1) * n + x] - tmp[Math.max(y - r, 0) * n + x];
-      }
-    }
-    return out;
-  }
-
-function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf) {
+function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf, seed) {
   const img = ctx.createImageData(n, n);
   const data = img.data;
   const N = n * n;
@@ -1049,14 +1107,41 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
     if (mode !== 'height' && biomeIds[i] === 6) snow[i] = 1;
   }
 
-  // Soft biome borders: blur colours over land only (weighted by the land mask)
+  // Soft version of the colours (blur over land only, weighted by the land mask)
   const rBorder = Math.max(1, Math.round(3 * px));
   const wL = blurred(land, n, rBorder);
   const bR = blurred(R, n, rBorder), bG = blurred(G, n, rBorder), bB = blurred(B, n, rBorder);
   const snowSoft = blurred(snow, n, rBorder);
 
-  // Smoothed height for the elevation layers (soft, rounded contours)
+  // Heights: soft (rounded contours) and nearly raw (crisp contours)
   const hs = blurred(h, n, Math.max(1, Math.round(4 * px)));
+  const hc = blurred(h, n, 1);
+
+  // Per pixel: softness 0 (crisp, ragged) .. 1 (soft), and a jitter offset used to
+  // pick colour/height from a nearby point, which makes borders ragged
+  const soft = new Float32Array(N);
+  const jx = new Int32Array(N);
+  const jy = new Int32Array(N);
+  const jagL = BORDER_JAG_LARGE * px, jagS = BORDER_JAG_SMALL * px;
+  for (let y = 0; y < n; y++) {
+    const v = y / (n - 1);
+    for (let x = 0; x < n; x++) {
+      const i = idx(x, y, n);
+      if (!land[i]) continue;
+      const u = x / (n - 1);
+      soft[i] = smoothstep01(0.35, 0.65, fbm(u * 3, v * 3, seed + 9100, 3, 2.0, 0.5));
+      const ox = (fbm(u * 10, v * 10, seed + 9110, 3, 2.0, 0.5) - 0.5) * 2 * jagL
+               + (fbm(u * 40, v * 40, seed + 9111, 2, 2.0, 0.5) - 0.5) * 2 * jagS;
+      const oy = (fbm(u * 10, v * 10, seed + 9120, 3, 2.0, 0.5) - 0.5) * 2 * jagL
+               + (fbm(u * 40, v * 40, seed + 9121, 2, 2.0, 0.5) - 0.5) * 2 * jagS;
+      const sx = clamp(Math.round(x + ox), 0, n - 1);
+      const sy = clamp(Math.round(y + oy), 0, n - 1);
+      const j = idx(sx, sy, n);
+      // never pull a colour from the sea
+      jx[i] = land[j] ? sx : x;
+      jy[i] = land[j] ? sy : y;
+    }
+  }
 
   // Shelf: driven by the real seabed depth, not by distance to the coast, so it is wide
   // where the bottom is shallow far out and almost absent off steep coasts.
@@ -1095,23 +1180,28 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
         const rim = Math.pow(shallow[i], 1.5) * 0.85;
         r = lerp(r, ATLAS.rim[0], rim); g = lerp(g, ATLAS.rim[1], rim); b = lerp(b, ATLAS.rim[2], rim);
       } else {
+        // Colour: ragged (from the jittered point) blended with soft, by local softness
+        const s = soft[i];
+        const j = idx(jx[i], jy[i], n);
         const w = wL[i] > 1e-6 ? 1 / wL[i] : 0;
-        r = bR[i] * w; g = bG[i] * w; b = bB[i] * w;
+        r = lerp(R[j], bR[i] * w, s); g = lerp(G[j], bG[i] * w, s); b = lerp(B[j], bB[i] * w, s);
 
-        // Elevation: each band is a translucent ink layer with a soft, slightly darker rim
-        const alt = clamp((hs[i] - seaLevel) / (1 - seaLevel + 1e-9), 0, 1);
+        // Elevation: stacked translucent ink layers, no rim. Crisp ragged contours where
+        // soft is low, smooth rounded ones where it is high.
+        const hl = lerp(hc[j], hs[i], s);
+        const alt = clamp((hl - seaLevel) / (1 - seaLevel + 1e-9), 0, 1);
+        const ew = lerp(0.003, 0.02, s);
         const inkK = 1 - 0.75 * snowSoft[i]; // keep snow fields light
         for (const level of ATLAS.layers) {
-          const cover = smoothstep01(level - 0.012, level + 0.012, alt);
+          const cover = smoothstep01(level - ew, level + ew, alt);
           if (cover <= 0) break;
-          const edge = cover * (1 - cover) * 4;
-          const a = (ATLAS.inkAlpha * cover + ATLAS.inkEdge * edge) * inkK;
+          const a = ATLAS.inkAlpha * cover * inkK;
           r = lerp(r, ATLAS.ink[0], a); g = lerp(g, ATLAS.ink[1], a); b = lerp(b, ATLAS.ink[2], a);
         }
 
-        // Very gentle relief (flat ground has hillshade ~0.7)
+        // Relief shading (flat ground has hillshade ~0.7)
         const sh = hillshade(h, n, x, y);
-        const shade = clamp(1 + (sh - 0.7) * 0.35, 0.85, 1.08);
+        const shade = clamp(1 + (sh - 0.7) * 0.6, 0.78, 1.12);
         r *= shade; g *= shade; b *= shade;
 
         // Pale edge along the shore
@@ -1312,30 +1402,28 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
     // 1) Base height from continents
     let h = buildHeightmap(n, seed, continentsMin, continentsMax);
 
-    // 2) Pseudo-tectonics uplift layer
-    const plates = generatePlates(seed, platesCount);
-    const plateFields = computePlateFields(n, plates);
-    const uplift = buildUpliftMap(n, plates, plateFields, seed);
+    // 2) Land relief: lowlands, plateaus and hills instead of one dome per continent
+    shapeLand(h, n, seed, seaLevel);
 
-    // apply uplift (mountain chains / rifts)
+    // 3) Mountains, rifts and island arcs along plate edges
+    const plates = generatePlates(seed, platesCount);
+    const plateFields = computePlateFields(n, plates, seed);
+    assignPlateTypes(plates, plateFields, h, seaLevel);
+    const uplift = buildUpliftMap(n, plates, plateFields, seed);
 	const mountainsStrength = clamp(opts.mountainsStrength ?? 0.18, 0, 0.6);
 
 	for (let i = 0; i < h.length; i++) {
-	  // landMask: 0 в океане, 1 на суше, плавный переход у берега
-	  const m = clamp((h[i] - seaLevel + 0.06) / 0.18, 0, 1);
-	  const landMask = m * m * (3 - 2 * m); // smoothstep
-
-	  // немного оставим океанические хребты, но сильно слабее
-	  const oceanFactor = 0.15;
-	  const factor = oceanFactor + (1 - oceanFactor) * landMask;
-
-	  h[i] = clamp(h[i] + uplift[i] * mountainsStrength * factor, 0, 1);
+	  // full strength on land, weaker at sea (island arcs, mid-ocean ridges)
+	  const m = clamp((h[i] - seaLevel + 0.04) / 0.08, 0, 1);
+	  const factor = MOUNTAINS_AT_SEA + (1 - MOUNTAINS_AT_SEA) * m * m * (3 - 2 * m);
+	  h[i] = clamp(h[i] + uplift[i] * mountainsStrength * MOUNTAINS_SCALE * factor, 0, 1);
 	}
 
-    // 3) Erosion (light) after tectonics
+    // 4) Erosion (light) after tectonics
+    streamErodeHalf(h, n, seaLevel, STREAM_ERODE_PASSES, STREAM_ERODE_K);
     thermalErode(h, n, 7, 0.017);
 
-    // 4) Climate (before hydrology: river flow depends on rain)
+    // 5) Climate (before hydrology: river flow depends on rain)
     const temp = computeTemperature(h, n, seaLevel);
 	const desertStrength = clamp(opts.desertStrength ?? 0.35, 0, 1);
 	const windGrid = buildWindField(Math.max(96, Math.min(160, (n / 6) | 0)), seed);
@@ -1343,7 +1431,7 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
     // Absolute 0..1 index, no per-map min/max stretch (it used to amplify tiny differences)
     const rain = computeRain(h, n, seaLevel, temp, windGrid, desertStrength);
 
-    // 5) Hydrology: fill depressions (with a tiny slope), D8 flow, rain-weighted accumulation
+    // 6) Hydrology: fill depressions (with a tiny slope), D8 flow, rain-weighted accumulation
     const { filled: hf, order: flowOrder } = fillDepressions(h, n);
     const down = computeFlowDir(hf, n);
     const runoff = new Float32Array(n * n);
@@ -1368,7 +1456,7 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
 	}
 	smoothBiomeIds(biomeIds, h, n, seaLevel, 3);
 
-drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf);
+drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf, seed);
 	
   }
 
