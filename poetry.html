@@ -4,25 +4,28 @@
   <meta charset="utf-8" />
   <link rel="icon" href="/favicon.ico">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Стихи · Thorntales</title>
+  <title data-i18n="nav.poetry">Стихи · Thorntales</title>
   <link rel="stylesheet" href="/assets/style.css" />
 </head>
 
 <body data-page="poetry">
   <main class="wrap">
     <header class="top">
-      <h1>Стихи</h1>
-      <p class="sub">каталоги</p>
+      <h1 data-i18n="nav.poetry">Стихи</h1>
+      <p class="sub" data-i18n="poetry.sub">каталоги</p>
     </header>
 
-    <section id="catalogs" class="poetry-catalogs" aria-label="Каталоги стихов"></section>
+    <section id="catalogs" class="poetry-catalogs" aria-label="Каталоги стихов" data-i18n-attr="aria-label:poetry.sub"></section>
 
     <footer class="bottom">
-      <small>© 2025</small>
+      <small>© 2026</small>
     </footer>
   </main>
 
+  <script src="/assets/i18n.js"></script>
   <script src="/assets/layout.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  <script src="/assets/auth.js"></script>
   <script src="/assets/poetry-index.js"></script>
 </body>
 </html>

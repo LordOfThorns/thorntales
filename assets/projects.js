@@ -5,11 +5,13 @@
 (function () {
   'use strict';
 
-  // To add a project, add an entry here.
+  const tr = (key, fallback) => (window.I18n ? I18n.t(key) : fallback);
+
+  // To add a project, add an entry here (texts: keys in i18n.js).
   const PROJECTS = [
     {
-      label: 'Генератор карт',
-      desc: 'странные карты несуществующих миров',
+      label: tr('nav.mapGen', 'Генератор карт'),
+      desc: tr('projects.mapGen.desc', 'странные карты несуществующих миров'),
       href: '/terrain.html',
     },
   ];

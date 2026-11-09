@@ -16,7 +16,7 @@
 <body data-page="home">
   <main class="wrap">
     <header class="top">
-      <h1>Вы в Башне Тысячи Витражей</h1>
+      <h1 data-i18n="home.title">Вы в Башне Тысячи Витражей</h1>
       <p class="sub">если ты помнишь ту станцию<br>
 где открывается этот край<br>
 окно в семигранной витражной башне<br>
@@ -25,37 +25,40 @@
     </header>
   </main>
 
-  <section class="windows" aria-label="Главная навигация витражами">
+  <section class="windows" aria-label="Главная навигация витражами" data-i18n-attr="aria-label:home.windows">
     <a class="window" href="/polar-night.html" style="--img:url('./img/window-4.jpg')">
       <span class="glass"><span class="img"></span></span>
       <span class="lead"></span>
-      <span class="label">Фэнтези цикл "Полярная Ночь"</span>
+      <span class="label" data-i18n="home.window.polarNight">Фэнтези цикл "Полярная Ночь"</span>
     </a>
 
     <a class="window" href="/texts.html" style="--img:url('./img/window-3.jpg')">
       <span class="glass"><span class="img"></span></span>
       <span class="lead"></span>
-      <span class="label">Тексты</span>
+      <span class="label" data-i18n="nav.texts">Тексты</span>
     </a>
 
     <a class="window" href="/poetry.html" style="--img:url('./img/window-1.jpg')">
       <span class="glass"><span class="img"></span></span>
       <span class="lead"></span>
-      <span class="label">Стихи</span>
+      <span class="label" data-i18n="nav.poetry">Стихи</span>
     </a>
 
     <a class="window" href="/projects.html" style="--img:url('./img/window-rat.jpg')">
       <span class="glass"><span class="img"></span></span>
       <span class="lead"></span>
-      <span class="label">Проекты</span>
+      <span class="label" data-i18n="nav.projects">Проекты</span>
     </a>
   </section>
 
   <footer class="wrap bottom">
-    <small>© 2025</small>
+    <small>© 2026</small>
   </footer>
 
+  <script src="/assets/i18n.js"></script>
   <script src="/assets/layout.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  <script src="/assets/auth.js"></script>
   <script src="/assets/main.js"></script>
 </body>
 </html>

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title data-i18n="nav.login">Вход · Thorntales</title>
+  <link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body data-page="login">
+  <main class="wrap">
+    <header class="top">
+      <h1 data-i18n="login.title">Вход</h1>
+      <p class="sub" data-i18n="login.sub">Аккаунты выдаёт хозяин башни. Если у тебя его нет, напиши мне.</p>
+    </header>
+
+    <form class="panel form" id="loginForm" novalidate>
+      <label class="field">
+        <span class="field__label" data-i18n="login.email">Почта</span>
+        <input class="input" type="email" name="email" autocomplete="username" required>
+      </label>
+      <label class="field">
+        <span class="field__label" data-i18n="login.password">Пароль</span>
+        <input class="input" type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <p class="form__msg" id="loginMsg" role="status"></p>
+      <button class="btn btn--primary" type="submit" data-i18n="login.submit">Войти</button>
+    </form>
+
+    <footer class="bottom">
+      <small>© 2026</small>
+    </footer>
+  </main>
+
+  <script src="/assets/i18n.js"></script>
+  <script src="/assets/layout.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  <script src="/assets/auth.js"></script>
+  <script>
+    (function () {
+      const form = document.getElementById('loginForm');
+      const msg = document.getElementById('loginMsg');
+      const t = I18n.t;
+
+      // Only allow same-site relative paths as the redirect target
+      function nextUrl() {
+        const n = new URLSearchParams(location.search).get('next') || '';
+        return /^\/(?!\/)/.test(n) && !n.startsWith('/login.html') ? n : '/account.html';
+      }
+
+      // Already logged in: go on
+      Auth.ready.then(() => { if (Auth.user) location.replace(nextUrl()); });
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const email = form.email.value.trim();
+        const password = form.password.value;
+        if (!email || !password) {
+          showMsg(t('login.empty'), true);
+          return;
+        }
+
+        const btn = form.querySelector('button');
+        btn.disabled = true;
+        showMsg(t('login.progress'));
+        const { error } = await Auth.client.auth.signInWithPassword({ email, password });
+        btn.disabled = false;
+
+        if (error) {
+          const text = /invalid login credentials/i.test(error.message)
+            ? t('login.bad')
+            : t('login.failed') + error.message;
+          showMsg(text, true);
+          return;
+        }
+        location.replace(nextUrl());
+      });
+
+      function showMsg(text, isError) {
+        msg.textContent = text;
+        msg.classList.toggle('is-error', !!isError);
+      }
+    })();
+  </script>
+</body>
+</html>

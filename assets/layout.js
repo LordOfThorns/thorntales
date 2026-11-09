@@ -22,10 +22,25 @@
     poetry:     { label: 'Стихи',          href: '/poetry.html',      parent: 'home', menu: true },
     projects:   { label: 'Проекты',        href: '/projects.html',    parent: 'home', menu: true },
     mapGen:     { label: 'Генератор карт', href: '/terrain.html',     parent: 'projects' },
+    login:      { label: 'Вход',           href: '/login.html',       parent: 'home' },
+    account:    { label: 'Кабинет',        href: '/account.html',     parent: 'home' },
   };
 
   const pageId = document.body.dataset.page || '';
   let extraCrumbs = [];
+
+  // Labels come from i18n.js (key nav.<page id>); the Russian label above is the fallback
+  const t = (key, fallback) =>
+    window.I18n && I18n.has(key) ? I18n.t(key) : (fallback ?? (window.I18n ? I18n.t(key) : key));
+  for (const [id, p] of Object.entries(SITE)) p.label = t('nav.' + id, p.label);
+
+  function buildLangSwitch() {
+    if (!window.I18n) return '';
+    const buttons = I18n.langs.map((l) =>
+      `<button type="button" data-lang="${l}" aria-pressed="${l === I18n.lang}">${l.toUpperCase()}</button>`
+    ).join('');
+    return `<div class="lang-switch" role="group" aria-label="${escapeHtml(t('nav.language', 'Язык'))}">${buttons}</div>`;
+  }
 
   // ---------- Top menu ----------
 
@@ -54,16 +69,21 @@
     nav.innerHTML = `
       <div class="site-nav__inner">
         <a class="site-nav__brand" href="${SITE.home.href}">Thorntales</a>
-        <button class="site-nav__toggle" type="button" aria-expanded="false" aria-controls="site-nav-menu" aria-label="Меню">
-          <span></span><span></span><span></span>
-        </button>
-        <nav class="site-nav__menu" id="site-nav-menu" aria-label="Основное меню">
+        <nav class="site-nav__menu" id="site-nav-menu" aria-label="${escapeHtml(t('nav.mainMenu', 'Основное меню'))}">
           <ul>${items}</ul>
           <div class="site-nav__user" id="site-nav-user"></div>
         </nav>
+        ${buildLangSwitch()}
+        <button class="site-nav__toggle" type="button" aria-expanded="false" aria-controls="site-nav-menu" aria-label="${escapeHtml(t('nav.menu', 'Меню'))}">
+          <span></span><span></span><span></span>
+        </button>
       </div>`;
 
     document.body.prepend(nav);
+
+    nav.querySelectorAll('.lang-switch [data-lang]').forEach((b) => {
+      b.addEventListener('click', () => I18n.setLang(b.dataset.lang));
+    });
 
     const toggle = nav.querySelector('.site-nav__toggle');
     toggle.addEventListener('click', () => {
@@ -98,7 +118,7 @@
     if (!host) {
       host = document.createElement('nav');
       host.className = 'crumbs';
-      host.setAttribute('aria-label', 'Вы здесь');
+      host.setAttribute('aria-label', t('nav.crumbs', 'Вы здесь'));
       const wrap = document.querySelector('main.wrap') || document.body;
       wrap.prepend(host);
     }
@@ -115,7 +135,7 @@
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'to-top';
-    btn.setAttribute('aria-label', 'Наверх');
+    btn.setAttribute('aria-label', t('nav.toTop', 'Наверх'));
     btn.textContent = '↑';
     btn.addEventListener('click', () => {
       const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
