@@ -2,28 +2,33 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <link rel="icon" href="favicon.ico">
+  <link rel="icon" href="/favicon.ico">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Стихи</title>
-  <link rel="stylesheet" href="./assets/style.css" />
+  <title>Стихи · Thorntales</title>
+  <link rel="stylesheet" href="/assets/style.css" />
 </head>
 
-<body>
+<body data-page="poetry">
   <main class="wrap poetry-page">
     <header class="top">
       <h1 id="pageTitle">Стихи</h1>
-      <p class="sub" id="pageSub">каталоги </p>
+      <p class="sub" id="pageSub"></p>
     </header>
 
-    <nav class="poetry-toc" aria-label="Оглавление" id="toc"></nav>
-
-    <section class="poetry-list" id="poems"></section>
+    <div class="poetry-layout">
+      <aside class="poetry-toc" id="toc"></aside>
+      <div class="poetry-main">
+        <section class="poetry-list" id="poems"></section>
+        <nav class="catalog-pager" id="pager" aria-label="Соседние каталоги"></nav>
+      </div>
+    </div>
 
     <footer class="bottom">
       <small>© 2025</small>
     </footer>
   </main>
 
-  <script src="./assets/poems.js"></script>
+  <script src="/assets/layout.js"></script>
+  <script src="/assets/poems.js"></script>
 </body>
 </html>

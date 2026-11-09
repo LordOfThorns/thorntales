@@ -17,32 +17,48 @@
 	  if (!catsRes.ok) throw new Error(`${catalogsUrl}: ${catsRes.status}`);
 	  const catsJson = await catsRes.json();
 
-	  const catInfo = (catsJson.catalogs || []).find(x => x.id === cat);
+	  const catalogs = catsJson.catalogs || [];
+	  const catIndex = catalogs.findIndex(x => x.id === cat);
+	  const catInfo = catalogs[catIndex];
 
 	  // Заголовки: label вместо "cat"
 	  const pageLabel = catInfo?.label || humanizeCat(cat);
 	  pageTitle.textContent = pageLabel;
-	  document.title = pageLabel;
+	  document.title = `${pageLabel} · Thorntales`;
+	  if (window.Layout) Layout.setCrumbs([{ label: pageLabel }]);
 
 	  // Подзаголовок: desc (разрешаем только <br>)
 	  pageSub.innerHTML = catInfo?.desc ? allowOnlyBr(catInfo.desc) : '';
 
 	  const poems = parsePoemsTxt(raw);
 
-	  // TOC
+	  // TOC: sidebar on wide screens, collapsible block on narrow ones
 	  toc.innerHTML = `
-		<div class="poetry-toc__inner">
-		  ${poems.map(p => `
-			<a class="poetry-toc__link" href="#${escapeAttr(p.id)}">
-			  <span class="poetry-toc__date">${escapeHtml(p.date || '')}</span>
-			  <span class="poetry-toc__title">${escapeHtml(p.title || '')}</span>
-			</a>
-		  `).join('')}
-		</div>
+		<details class="poetry-toc__details">
+		  <summary class="poetry-toc__summary">Оглавление <span class="poetry-toc__count">${poems.length}</span></summary>
+		  <div class="poetry-toc__inner">
+		    ${poems.map(p => `
+			  <a class="poetry-toc__link" href="#${escapeAttr(p.id)}">
+			    <span class="poetry-toc__date">${escapeHtml(p.date || '')}</span>
+			    <span class="poetry-toc__title">${escapeHtml(p.title || '')}</span>
+			  </a>
+		    `).join('')}
+		  </div>
+		</details>
 	  `;
+	  setupTocMode(toc.querySelector('details'));
 
 	  // Poems
 	  poemsHost.innerHTML = poems.map(p => renderPoem(p)).join('');
+
+	  // Neighbour catalogs (order as in catalogs.json)
+	  renderPager(catalogs, catIndex);
+
+	  // Content is loaded after the browser tried to jump to #hash, so jump again
+	  if (location.hash) {
+	    const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+	    if (target) target.scrollIntoView();
+	  }
 
   } catch (e) {
     poemsHost.innerHTML = `
@@ -55,6 +71,38 @@
     `;
   }
   
+  function setupTocMode(details){
+    if (!details) return;
+    const wide = window.matchMedia('(min-width: 1000px)');
+    const apply = () => {
+      details.open = wide.matches;
+      details.classList.toggle('is-sidebar', wide.matches);
+    };
+    apply();
+    wide.addEventListener('change', apply);
+
+    // On narrow screens close the TOC after jumping to a poem
+    details.addEventListener('click', (e) => {
+      if (!wide.matches && e.target.closest('.poetry-toc__link')) details.open = false;
+    });
+  }
+
+  function renderPager(catalogs, i){
+    const pager = document.getElementById('pager');
+    if (!pager || i < 0) return;
+    const prev = catalogs[i - 1];
+    const next = catalogs[i + 1];
+    pager.innerHTML = `
+      ${prev ? `<a class="catalog-pager__link catalog-pager__link--prev" href="${escapeAttr(prev.href)}">
+        <span class="catalog-pager__hint">← предыдущий</span>
+        <span class="catalog-pager__label">${escapeHtml(prev.label)}</span></a>` : '<span></span>'}
+      <a class="catalog-pager__link catalog-pager__link--all" href="/poetry.html">Все каталоги</a>
+      ${next ? `<a class="catalog-pager__link catalog-pager__link--next" href="${escapeAttr(next.href)}">
+        <span class="catalog-pager__hint">следующий →</span>
+        <span class="catalog-pager__label">${escapeHtml(next.label)}</span></a>` : '<span></span>'}
+    `;
+  }
+
   function allowOnlyBr(html){
   // 1) экранируем всё
   const safe = escapeHtml(html);

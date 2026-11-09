@@ -67,9 +67,26 @@
     }
   }
 
+  const BREAK_DELAY_MS = 650;
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  // When the page is restored from the back/forward cache, mend the broken glass
+  window.addEventListener("pageshow", (e) => {
+    if (!e.persisted) return;
+    document.querySelectorAll(".window.is-broken").forEach((w) => {
+      w.classList.remove("is-broken");
+      const layer = w.querySelector(".shards");
+      if (layer) layer.innerHTML = "";
+    });
+  });
+
   onReady(() => {
     document.querySelectorAll(".window").forEach((w) => {
       w.addEventListener("click", (e) => {
+        // Let the browser handle "open in new tab/window" clicks and users who disabled animations
+        if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+        if (reducedMotion.matches) return;
+
         e.preventDefault();
 
         // если уже разбито: сразу перейти
@@ -90,7 +107,7 @@
         if (href) {
           setTimeout(() => {
             window.location.href = href;
-          }, 1000);
+          }, BREAK_DELAY_MS);
         }
       });
     });

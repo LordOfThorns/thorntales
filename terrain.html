@@ -2,21 +2,20 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <link rel="icon" href="favicon.ico">
-  
-  <meta property="og:title" content="Thorntales">
-<meta property="og:description" content="Verbal art.">
-<meta property="og:type" content="website">
-<meta property="og:url" content="https://www.thorntales.net/">
-<meta property="og:image" content="https://www.thorntales.net/assets/preview.png">
+  <link rel="icon" href="/favicon.ico">
+  <meta property="og:title" content="Генератор карт · Thorntales">
+  <meta property="og:description" content="Странная карта несуществующего мира.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://www.thorntales.net/terrain.html">
+  <meta property="og:image" content="https://www.thorntales.net/assets/preview.png">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Home</title>
-  <link rel="stylesheet" href="./assets/style.css" />
+  <title>Генератор карт · Thorntales</title>
+  <link rel="stylesheet" href="/assets/style.css" />
 </head>
-<body>
+<body data-page="mapGen">
   <main class="wrap">
     <header class="top">
-      <h1>Вы в Башне Тысячи Витражей</h1>
+      <h1>Генератор карт</h1>
       <p class="sub">Странная карта несуществующего мира. Измените seed чтобы поменять случайную генерацию.</p>
     </header>
 
@@ -39,6 +38,7 @@
   <select id="mode">
     <option value="biomes" selected>Biomes</option>
     <option value="height">Height</option>
+	<option value="wind">Wind</option>
   </select>
 </label>
 
@@ -71,7 +71,7 @@
 
 </div>
 
-<script src="./assets/terrain-map.js"></script>
+<script src="/assets/terrain-map.js"></script>
 <script>
   function gen() {
     const seed = parseInt(document.getElementById('seed').value, 10) || 6000;
@@ -115,5 +115,6 @@
     </footer>
   </main>
 
+  <script src="/assets/layout.js"></script>
 </body>
 </html>

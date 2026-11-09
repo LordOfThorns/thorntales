@@ -69,6 +69,114 @@
     }
     return sum; // ~[0,1]
   }
+  
+  function buildWindField(g, seed) {
+  const vx = new Float32Array(g * g);
+  const vy = new Float32Array(g * g);
+  const spd = new Float32Array(g * g);
+
+  // stream function ψ(u,v)
+  const psi = new Float32Array(g * g);
+
+  const freq1 = 3.0;
+  const freq2 = 7.0;
+
+  for (let y = 0; y < g; y++) {
+    const v = y / (g - 1);
+    for (let x = 0; x < g; x++) {
+      const u = x / (g - 1);
+
+      // ψ: чем плавнее, тем крупнее вихри (freq ниже = крупнее)
+      const p1 = fbm(u * freq1, v * freq1, seed + 2000, 4, 2.0, 0.5);
+      const p2 = fbm(u * freq2, v * freq2, seed + 3000, 3, 2.0, 0.5);
+      psi[idx(x, y, g)] = 0.75 * p1 + 0.25 * p2;
+    }
+  }
+
+  // curl from ψ via finite differences
+  const eps = 1 / (g - 1);
+
+  for (let y = 0; y < g; y++) {
+    const v = y / (g - 1);
+    const lat = (v - 0.5) * 2.0;          // -1..1
+    const latAbs = Math.abs(lat);         // 0..1
+
+    // Широтные пояса: W->E в умеренных, E->W на экваторе/полюсах
+    // -cos(2π*|lat|): -1 (экватор), +1 (средние), -1 (полюса)
+    const baseX = -Math.cos(2 * Math.PI * latAbs);
+
+    // Умеренные широты более “вихревые”
+    const belt = Math.exp(-Math.pow((latAbs - 0.55) / 0.22, 2)); // пик ~0.55
+    const swirlK = 0.55 + 0.85 * belt; // 0.55..1.40
+
+    for (let x = 0; x < g; x++) {
+      const xm1 = clamp(x - 1, 0, g - 1);
+      const xp1 = clamp(x + 1, 0, g - 1);
+      const ym1 = clamp(y - 1, 0, g - 1);
+      const yp1 = clamp(y + 1, 0, g - 1);
+
+      const dpsi_dx = (psi[idx(xp1, y, g)] - psi[idx(xm1, y, g)]) / (2 * eps + 1e-9);
+      const dpsi_dy = (psi[idx(x, yp1, g)] - psi[idx(x, ym1, g)]) / (2 * eps + 1e-9);
+
+      // curl: v = ( dψ/dy, -dψ/dx )
+      let wx = dpsi_dy;
+      let wy = -dpsi_dx;
+
+      // Смешиваем с широтной “струёй”
+      wx = wx * swirlK + baseX * 1.15;
+      wy = wy * swirlK;
+
+      // Нормализация
+      const len = Math.sqrt(wx * wx + wy * wy) + 1e-9;
+      wx /= len; wy /= len;
+
+      const i = idx(x, y, g);
+      vx[i] = wx;
+      vy[i] = wy;
+
+      // скорость: чуть больше в умеренных широтах + шум
+      const sNoise = fbm((x / (g - 1)) * 2.0, (y / (g - 1)) * 2.0, seed + 4000, 3, 2.0, 0.5);
+      spd[i] = clamp(0.55 + 0.55 * belt + (sNoise - 0.5) * 0.25, 0.25, 1.25);
+    }
+  }
+
+  return { g, vx, vy, spd };
+}
+
+function sampleWindBilinear(wind, u, v) {
+  const g = wind.g;
+  const x = clamp(u * (g - 1), 0, g - 1);
+  const y = clamp(v * (g - 1), 0, g - 1);
+
+  const x0 = Math.floor(x), y0 = Math.floor(y);
+  const x1 = Math.min(x0 + 1, g - 1);
+  const y1 = Math.min(y0 + 1, g - 1);
+
+  const tx = x - x0, ty = y - y0;
+
+  const i00 = idx(x0, y0, g), i10 = idx(x1, y0, g);
+  const i01 = idx(x0, y1, g), i11 = idx(x1, y1, g);
+
+  const vx0 = lerp(wind.vx[i00], wind.vx[i10], tx);
+  const vx1 = lerp(wind.vx[i01], wind.vx[i11], tx);
+  const vy0 = lerp(wind.vy[i00], wind.vy[i10], tx);
+  const vy1 = lerp(wind.vy[i01], wind.vy[i11], tx);
+  const sp0 = lerp(wind.spd[i00], wind.spd[i10], tx);
+  const sp1 = lerp(wind.spd[i01], wind.spd[i11], tx);
+
+  return {
+    vx: lerp(vx0, vx1, ty),
+    vy: lerp(vy0, vy1, ty),
+    spd: lerp(sp0, sp1, ty),
+  };
+}
+
+function sampleHeightNearest(h, n, u, v) {
+  const x = clamp((u * (n - 1) + 0.5) | 0, 0, n - 1);
+  const y = clamp((v * (n - 1) + 0.5) | 0, 0, n - 1);
+  return h[idx(x, y, n)];
+}
+
 
   // 2D index helpers
   function idx(x, y, n) { return y * n + x; }
@@ -542,185 +650,73 @@
   }
 
   // windDir: 'W', 'E', 'N', 'S' (dominant wind direction)
-  function computeRain(h, n, seaLevel, windDir, desertStrength) {
-    const rain = new Float32Array(n * n);
+function computeRainWind(h, n, seaLevel, wind, desertStrength) {
+  const rain = new Float32Array(n * n);
 
-    // helpers to scan lines
-    function scanWestToEast() {
-      for (let y = 0; y < n; y++) {
-        let m = 0.0; // moisture carried
-        let prevH = h[idx(0, y, n)];
-        for (let x = 0; x < n; x++) {
-          const i = idx(x, y, n);
-          const hi = h[i];
+  const ds = clamp(desertStrength ?? 0.35, 0, 1);
+  const dsK = ds * ds;
 
-          if (hi <= seaLevel) {
-            m = 1.0;
-            rain[i] = 1.0;
-            prevH = hi;
-            continue;
-          }
+  // параметры: можно крутить
+  const steps = 26;                 // сколько “смотрим по ветру”
+  const baseStep = 1.8 / wind.g;    // шаг в UV
+  const decay = 0.985 - 0.10 * dsK; // чем больше deserts, тем быстрее сохнет
+  const oroK = 2.8;                 // орография
+  const bg = 0.015;                 // фон (чтобы не было 0 везде)
 
-          // decay as we move inland
-          m *= 0.985;
+  for (let y = 0; y < n; y++) {
+    const v0 = y / (n - 1);
+    for (let x = 0; x < n; x++) {
+      const u0 = x / (n - 1);
+      const i = idx(x, y, n);
+      const h0 = h[i];
 
-          // orographic precipitation: if slope upward, dump moisture
-          const up = Math.max(0, hi - prevH);
-          const drop = up * 3.0; // tune
-          const r = clamp(m * (0.22 + drop), 0, 1);
-          rain[i] = r;
+      if (h0 <= seaLevel) {
+        rain[i] = 1.0;
+        continue;
+      }
 
-          // rain shadow: after dumping, moisture decreases
-          m = clamp(m - r * 0.55, 0, 1);
+      let u = u0, v = v0;
+      let m = 0.0;          // влага
+      let accR = 0.0;       // осадки
+      let prevH = h0;
 
-          prevH = hi;
+      for (let s = 0; s < steps; s++) {
+        const w = sampleWindBilinear(wind, u, v);
+
+        // backtrace: идём ПРОТИВ ветра, ищем “откуда пришёл воздух”
+        const step = baseStep * w.spd;
+        u = clamp(u - w.vx * step, 0, 1);
+        v = clamp(v - w.vy * step, 0, 1);
+
+        const hh = sampleHeightNearest(h, n, u, v);
+
+        if (hh <= seaLevel) {
+          // над океаном воздух насыщается
+          m = 1.0;
+          prevH = hh;
+          continue;
         }
+
+        // воздух сушеет по мере движения
+        m *= decay;
+
+        // осадки на подъёме (орография)
+        const up = Math.max(0, hh - prevH);
+        const r = clamp(m * (0.06 + up * oroK), 0, 1);
+
+        accR += r;
+        m = Math.max(0, m - r * 0.65);
+
+        prevH = hh;
       }
+
+      rain[i] = clamp(accR + m * bg, 0, 1);
     }
-
-    function scanEastToWest() {
-      for (let y = 0; y < n; y++) {
-        let m = 0.0;
-        let prevH = h[idx(n - 1, y, n)];
-        for (let x = n - 1; x >= 0; x--) {
-          const i = idx(x, y, n);
-          const hi = h[i];
-
-          if (hi <= seaLevel) {
-            m = 1.0;
-            rain[i] = 1.0;
-            prevH = hi;
-            continue;
-          }
-
-          m *= 0.985;
-          const up = Math.max(0, hi - prevH);
-          const drop = up * 3.0;
-          const r = clamp(m * (0.22 + drop), 0, 1);
-          rain[i] = r;
-          m = clamp(m - r * 0.55, 0, 1);
-          prevH = hi;
-        }
-      }
-    }
-
-    function scanNorthToSouth() {
-      for (let x = 0; x < n; x++) {
-        let m = 0.0;
-        let prevH = h[idx(x, 0, n)];
-        for (let y = 0; y < n; y++) {
-          const i = idx(x, y, n);
-          const hi = h[i];
-
-          if (hi <= seaLevel) {
-            m = 1.0;
-            rain[i] = 1.0;
-            prevH = hi;
-            continue;
-          }
-
-          m *= 0.985;
-          const up = Math.max(0, hi - prevH);
-          const drop = up * 3.0;
-          const r = clamp(m * (0.22 + drop), 0, 1);
-          rain[i] = r;
-          m = clamp(m - r * 0.55, 0, 1);
-          prevH = hi;
-        }
-      }
-    }
-
-    function scanSouthToNorth() {
-      for (let x = 0; x < n; x++) {
-        let m = 0.0;
-        let prevH = h[idx(x, n - 1, n)];
-        for (let y = n - 1; y >= 0; y--) {
-          const i = idx(x, y, n);
-          const hi = h[i];
-
-          if (hi <= seaLevel) {
-            m = 1.0;
-            rain[i] = 1.0;
-            prevH = hi;
-            continue;
-          }
-
-          m *= 0.985;
-          const up = Math.max(0, hi - prevH);
-          const drop = up * 3.0;
-          const r = clamp(m * (0.22 + drop), 0, 1);
-          rain[i] = r;
-          m = clamp(m - r * 0.55, 0, 1);
-          prevH = hi;
-        }
-      }
-    }
-
-    // initialise with chosen wind scan
-    if (windDir === 'E') scanEastToWest();
-    else if (windDir === 'N') scanNorthToSouth();
-    else if (windDir === 'S') scanSouthToNorth();
-    else scanWestToEast(); // default W
-
-    // add latitude-driven dryness bands (Hadley cells-ish):
-    for (let y = 0; y < n; y++) {
-      const lat = Math.abs((y / (n - 1)) - 0.5) * 2.0;
-      // deserts around ~0.3 lat, wetter near equator and subpolar
-      const hadleyDry = Math.exp(-Math.pow((lat - 0.35) / 0.14, 2));
-      const equatorWet = Math.exp(-Math.pow(lat / 0.22, 2));
-      const polarDry = Math.exp(-Math.pow((lat - 1.0) / 0.22, 2));
-
-		const ds = clamp(desertStrength ?? 0.35, 0, 1);
-
-		const mod = clamp(
-		  1.0 + equatorWet * 0.25
-			  - hadleyDry * ds
-			  - polarDry * 0.10,
-		  0.45,
-		  1.15
-		);
-
-
-      for (let x = 0; x < n; x++) {
-        const i = idx(x, y, n);
-        // oceans stay wet
-        if (h[i] <= seaLevel) continue;
-        rain[i] = clamp(rain[i] * mod, 0, 1);
-      }
-    }
-	
-	// --- desertStrength should visibly matter ---
-const ds2 = clamp(desertStrength ?? 0.35, 0, 1);
-
-// dryness noise field (patchy deserts, not a clean band)
-const drySeed = 12345;
-
-for (let y = 0; y < n; y++) {
-  const v = y / (n - 1);
-  for (let x = 0; x < n; x++) {
-    const u = x / (n - 1);
-    const i = idx(x, y, n);
-
-    if (h[i] <= seaLevel) continue; // ocean unaffected
-
-    // patchiness: 0..1, makes deserts cluster instead of uniform wash
-    const patch = fbm(u * 3.5, v * 3.5, drySeed, 4, 2.0, 0.5);
-
-    // continentality proxy: less rain where current rain is already low (inland/shadow)
-    const inland = clamp(1.0 - rain[i], 0, 1);
-
-    // reduce rain: stronger in already-dry places + patchy field
-    const dryness = clamp(0.35 + 0.65 * inland, 0, 1) * (0.55 + 0.45 * patch);
-
-    // apply
-    const factor = 1.0 - ds2 * 0.65 * dryness; // 0.65 = strength knob
-    rain[i] = clamp(rain[i] * factor, 0, 1);
   }
+
+  return rain;
 }
 
-
-    return rain;
-  }
 
   // -------------------- Rendering helpers --------------------
 
@@ -766,11 +762,18 @@ for (let y = 0; y < n; y++) {
       (deep[2] + (shallow[2] - deep[2]) * t) | 0
     ];
   }
-
-  function biomeColor(height, seaLevel, temp, rain) {
+  
+  function biomeColor(height, seaLevel, temp, rain, desertStrength) {
     if (height <= seaLevel) return oceanColor(height, seaLevel);
 
     const alt = (height - seaLevel) / (1 - seaLevel + 1e-9);
+	
+	const ds = clamp(desertStrength ?? 0.35, 0, 1);
+	const k = ds * ds;
+
+	// Сдвигаем пороги: при больших deserts пустыня появляется чаще.
+	const desertCut = 0.18 + 0.18 * k;   // 0.18 .. 0.36
+	const steppeCut = 0.36 + 0.12 * k;   // 0.36 .. 0.48
 
     // snow by altitude or cold
     if (temp < 0.14 || alt > 0.88) return [235, 235, 240];
@@ -781,17 +784,17 @@ for (let y = 0; y < n; y++) {
       return [120, 145, 120];                  // taiga-ish
     }
 
-    // hot deserts
-    if (rain < 0.20) {
-      if (temp > 0.55) return [200, 180, 110]; // sand
-      return [175, 170, 135];                  // semi-arid / cold desert
-    }
+	// hot deserts
+	if (rain < desertCut) {
+	  if (temp > 0.55) return [200, 180, 110]; // sand
+	  return [175, 170, 135];                  // semi-arid / cold desert
+	}
 
-    // grassland / savanna
-    if (rain < 0.38) {
-      if (temp > 0.55) return [165, 175, 80];  // savanna
-      return [120, 165, 95];                   // steppe
-    }
+	// grassland / savanna
+	if (rain < steppeCut) {
+	  if (temp > 0.55) return [165, 175, 80];  // savanna
+	  return [120, 165, 95];                   // steppe
+	}
 
     // forests
     if (rain < 0.65) {
@@ -803,51 +806,215 @@ for (let y = 0; y < n; y++) {
     if (temp > 0.55) return [35, 120, 75];     // rainforest
     return [55, 120, 95];                      // wet temperate
   }
+function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength) {
+  const img = ctx.createImageData(n, n);
+  const data = img.data;
 
-  function drawMap(ctx, h, acc, temp, rain, n, seaLevel, riverThreshold, mode) {
-    const img = ctx.createImageData(n, n);
-    const data = img.data;
+  let accMax = 1;
+  for (let i = 0; i < acc.length; i++) if (acc[i] > accMax) accMax = acc[i];
 
-    let accMax = 1;
-    for (let i = 0; i < acc.length; i++) if (acc[i] > accMax) accMax = acc[i];
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const i = idx(x, y, n);
+      const height = h[i];
 
-    for (let y = 0; y < n; y++) {
-      for (let x = 0; x < n; x++) {
+      let rgb;
+      if (mode === 'height') rgb = heightColor(height, seaLevel);
+      else rgb = biomeIdToColor(biomeIds[i], height, seaLevel);
+
+      let [r, g, b] = rgb;
+
+      const sh = hillshade(h, n, x, y);
+      const shade = 0.55 + 0.45 * sh;
+      r = (r * shade) | 0;
+      g = (g * shade) | 0;
+      b = (b * shade) | 0;
+
+      if (height > seaLevel && acc[i] > riverThreshold) {
+        const t = Math.log(acc[i]) / Math.log(accMax + 1e-9);
+        const w = clamp((t - 0.25) * 2.0, 0, 1);
+        const rr = 30, rg = 90, rb = 160;
+        r = lerp(r, rr, 0.55 + 0.35 * w) | 0;
+        g = lerp(g, rg, 0.55 + 0.35 * w) | 0;
+        b = lerp(b, rb, 0.55 + 0.35 * w) | 0;
+      }
+
+      const o = i * 4;
+      data[o + 0] = r;
+      data[o + 1] = g;
+      data[o + 2] = b;
+      data[o + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+}
+
+  
+  function debugBiomeStats(h, temp, rain, n, seaLevel, desertStrength) {
+  const ds = clamp(desertStrength ?? 0.35, 0, 1);
+  const k = ds * ds;
+  const desertCut = 0.18 + 0.18 * k;
+  const steppeCut = 0.36 + 0.12 * k;
+
+  let land = 0, desert = 0, steppe = 0, forest = 0, snow = 0;
+  let rMin =  1e9, rMax = -1e9, rSum = 0;
+
+  for (let i = 0; i < h.length; i++) {
+    if (h[i] <= seaLevel) continue;
+    land++;
+
+    const alt = (h[i] - seaLevel) / (1 - seaLevel + 1e-9);
+    const t = temp[i];
+    const r = rain[i];
+
+    rMin = Math.min(rMin, r);
+    rMax = Math.max(rMax, r);
+    rSum += r;
+
+    if (t < 0.14 || alt > 0.88) { snow++; continue; }
+    if (t < 0.28) { /* tundra/taiga */ continue; }
+
+    if (r < desertCut) desert++;
+    else if (r < steppeCut) steppe++;
+    else if (r < 0.65) forest++;
+  }
+
+  const rAvg = land ? (rSum / land) : 0;
+  console.log('[BiomeStats] ds=', ds.toFixed(2),
+    'desertCut=', desertCut.toFixed(3),
+    'steppeCut=', steppeCut.toFixed(3),
+    'rain(min/avg/max)=', rMin.toFixed(3), rAvg.toFixed(3), rMax.toFixed(3),
+    'land=', land,
+    'desert%=', land ? (100*desert/land).toFixed(1) : '0',
+    'steppe%=', land ? (100*steppe/land).toFixed(1) : '0',
+    'forest%=', land ? (100*forest/land).toFixed(1) : '0',
+    'snow%=', land ? (100*snow/land).toFixed(1) : '0'
+  );
+}
+
+function normalizeRainOverLand(rain, h, n, seaLevel) {
+  let min = Infinity, max = -Infinity;
+
+  for (let i = 0; i < rain.length; i++) {
+    if (h[i] <= seaLevel) continue;
+    const r = rain[i];
+    if (r < min) min = r;
+    if (r > max) max = r;
+  }
+
+  const inv = 1 / (max - min + 1e-9);
+
+  for (let i = 0; i < rain.length; i++) {
+    if (h[i] <= seaLevel) {
+      rain[i] = 1.0;          // океан всегда “мокрый”
+    } else {
+      rain[i] = clamp((rain[i] - min) * inv, 0, 1);
+    }
+  }
+}
+
+
+function drawWindDebug(ctx, wind, n) {
+  ctx.clearRect(0, 0, n, n);
+
+  // лёгкая сетка линий
+  ctx.fillStyle = '#0b1020';
+  ctx.fillRect(0, 0, n, n);
+
+  const stepPx = Math.max(14, (n / 48) | 0);
+  ctx.strokeStyle = 'rgba(120, 255, 160, 0.65)';
+  ctx.lineWidth = 1;
+
+  for (let y = stepPx; y < n; y += stepPx) {
+    for (let x = stepPx; x < n; x += stepPx) {
+      const u = x / (n - 1);
+      const v = y / (n - 1);
+      const w = sampleWindBilinear(wind, u, v);
+
+      const len = 10 + 18 * (w.spd - 0.25) / (1.25 - 0.25);
+      const x2 = x + w.vx * len;
+      const y2 = y + w.vy * len;
+
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+  }
+}
+
+function biomeId(height, seaLevel, temp, rain, desertStrength) {
+  if (height <= seaLevel) return 0; // ocean
+
+  const alt = (height - seaLevel) / (1 - seaLevel + 1e-9);
+  const ds = clamp(desertStrength ?? 0.35, 0, 1);
+  const k = ds * ds;
+
+  const desertCut = 0.18 + 0.18 * k;
+  const steppeCut = 0.36 + 0.12 * k;
+
+  if (temp < 0.14 || alt > 0.88) return 6; // snow
+  if (temp < 0.28) return (rain < 0.30) ? 5 : 4; // cold desert / taiga
+
+  if (rain < desertCut) return (temp > 0.55) ? 1 : 2; // hot desert / cold semi-arid
+  if (rain < steppeCut) return (temp > 0.55) ? 3 : 7; // savanna / steppe
+
+  if (rain < 0.65) return (temp > 0.55) ? 8 : 9; // seasonal / temperate forest
+  return (temp > 0.55) ? 10 : 11; // rainforest / wet temperate
+}
+
+function biomeIdToColor(id, height, seaLevel) {
+  if (id === 0) return oceanColor(height, seaLevel);
+  // подставь свои цвета (ниже примерные)
+  const pal = {
+    1:[200,180,110], 2:[175,170,135], 3:[165,175, 80], 7:[120,165, 95],
+    4:[120,145,120], 5:[150,155,130], 6:[235,235,240],
+    8:[ 55,140, 80], 9:[ 45,125, 70],10:[ 35,120, 75],11:[ 55,120, 95],
+  };
+  return pal[id] ?? [255, 0, 255];
+}
+
+function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
+  const out = new Int16Array(ids.length);
+  const counts = new Int16Array(32); // хватит на небольшую палитру
+
+  for (let it = 0; it < iterations; it++) {
+    out.set(ids);
+
+    for (let y = 1; y < n - 1; y++) {
+      for (let x = 1; x < n - 1; x++) {
         const i = idx(x, y, n);
-        const height = h[i];
+        if (h[i] <= seaLevel) continue; // океан не трогаем
 
-        let rgb;
-		if (mode === 'height') rgb = heightColor(height, seaLevel);
-		else rgb = biomeColor(height, seaLevel, temp[i], rain[i]);
-		let [r, g, b] = rgb;
+        counts.fill(0);
 
-        // Shade
-        const sh = hillshade(h, n, x, y);
-        const shade = 0.55 + 0.45 * sh;
-        r = (r * shade) | 0;
-        g = (g * shade) | 0;
-        b = (b * shade) | 0;
+        // текущий + 8 соседей
+        for (let k = 0; k < 8; k++) {
+          const j = idx(x + N8[k][0], y + N8[k][1], n);
+          const id = ids[j];
+          if (id > 0) counts[id]++;
+        }
+        const self = ids[i];
+        if (self > 0) counts[self]++;
 
-        // Rivers
-        if (height > seaLevel && acc[i] > riverThreshold) {
-          const t = Math.log(acc[i]) / Math.log(accMax + 1e-9);
-          const w = clamp((t - 0.25) * 2.0, 0, 1);
-          const rr = 30, rg = 90, rb = 160;
-          r = lerp(r, rr, 0.55 + 0.35 * w) | 0;
-          g = lerp(g, rg, 0.55 + 0.35 * w) | 0;
-          b = lerp(b, rb, 0.55 + 0.35 * w) | 0;
+        // найти победителя
+        let bestId = self;
+        let best = -1;
+        for (let id = 1; id < counts.length; id++) {
+          if (counts[id] > best) { best = counts[id]; bestId = id; }
         }
 
-        const o = i * 4;
-        data[o + 0] = r;
-        data[o + 1] = g;
-        data[o + 2] = b;
-        data[o + 3] = 255;
+        // меняем только если реально “большинство”, чтобы не смазывать границы
+        if (best >= 6) out[i] = bestId; // 6 из 9
       }
     }
 
-    ctx.putImageData(img, 0, 0);
+    ids.set(out);
   }
+}
+
+
 
   // -------------------- Public API --------------------
 
@@ -906,10 +1073,29 @@ for (let y = 0; y < n; y++) {
     // 6) Climate
     const temp = computeTemperature(h, n, seaLevel);
 	const desertStrength = clamp(opts.desertStrength ?? 0.35, 0, 1);
-	const rain = computeRain(h, n, seaLevel, windDir, desertStrength);
-    // 7) Draw
-    const mode = (opts.mode === 'height') ? 'height' : 'biomes';
-	drawMap(ctx, h, acc, temp, rain, n, seaLevel, riverThreshold, mode);
+	const windGrid = buildWindField(Math.max(96, Math.min(160, (n / 6) | 0)), seed);
+
+    const rain = computeRainWind(h, n, seaLevel, windGrid, desertStrength);
+	normalizeRainOverLand(rain, h, n, seaLevel);
+	
+	debugBiomeStats(h, temp, rain, n, seaLevel, desertStrength);
+
+    // 7) Draw	
+	const mode = (opts.mode === 'height') ? 'height' : (opts.mode === 'wind' ? 'wind' : 'biomes');
+
+	if (mode === 'wind') {
+	  drawWindDebug(ctx, windGrid, n);
+	  return;
+	}
+	
+	const biomeIds = new Int16Array(n * n);
+	for (let i = 0; i < biomeIds.length; i++) {
+	  biomeIds[i] = biomeId(h[i], seaLevel, temp[i], rain[i], desertStrength);
+	}
+	smoothBiomeIds(biomeIds, h, n, seaLevel, 3);
+
+drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength);
+	
   }
 
   window.TerrainMap = { render };
