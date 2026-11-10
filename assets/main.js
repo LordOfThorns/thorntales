@@ -4,26 +4,41 @@
      - shards cut from the window's own picture (each shows the piece it came from),
        tumbling in 3D, glinting as they turn, flying out and falling in an arc;
      - a few twinkling sparkles.
-   Only transforms, opacity and filter are animated (Web Animations API), ~40 elements.
+
+   Smoothness: only transform and opacity are animated (the GPU handles both without
+   repainting), the effect lives in its own layer on top of the page (inside the window
+   it would sit under the window's drop-shadow filter, which then has to be redrawn
+   every frame), the glint is a white layer whose opacity changes (not a brightness
+   filter), and the flight ends before the browser leaves the page. The target page is
+   prefetched when the pointer comes over a window.
 */
 (function () {
   "use strict";
 
-  const BREAK_DELAY_MS = 650;  // navigation starts after this
+  const BREAK_DELAY_MS = 680;  // navigation starts after this; flights end before it
   const SHARDS = 30;
   const SPARKLES = 12;
   const GLASS_INSET = 12;      // .glass is inset by 12px inside .window (style.css)
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
-  function ensureShardsLayer(winEl) {
-    let layer = winEl.querySelector(".shards");
+  // One overlay per window, placed over it in page coordinates
+  function effectLayer(winEl) {
+    let layer = winEl._shardLayer;
     if (!layer) {
       layer = document.createElement("div");
       layer.className = "shards";
-      winEl.appendChild(layer);
+      document.body.appendChild(layer);
+      winEl._shardLayer = layer;
     }
+    const r = winEl.getBoundingClientRect();
+    layer.style.left = `${r.left + window.scrollX}px`;
+    layer.style.top = `${r.top + window.scrollY}px`;
+    layer.style.width = `${r.width}px`;
+    layer.style.height = `${r.height}px`;
+    layer.innerHTML = "";
     return layer;
   }
 
@@ -56,8 +71,7 @@
   }
 
   function spawnBreak(winEl) {
-    const layer = ensureShardsLayer(winEl);
-    layer.innerHTML = "";
+    const layer = effectLayer(winEl);
 
     const W = winEl.clientWidth;
     const H = winEl.clientHeight;
@@ -74,19 +88,18 @@
       bgX = (gw - bgW) / 2; bgY = (gh - bgH) / 2;
     }
 
+    const frag = document.createDocumentFragment();
+    const jobs = []; // [element, keyframes, options], started together after insertion
+
     // impact flash
     const flash = document.createElement("div");
     flash.className = "impact";
-    flash.style.left = `${cx}px`;
-    flash.style.top = `${cy}px`;
-    layer.appendChild(flash);
-    flash.animate(
-      [
-        { transform: "translate(-50%, -50%) scale(0.2)", opacity: 0.95 },
-        { transform: "translate(-50%, -50%) scale(1.6)", opacity: 0 },
-      ],
-      { duration: 220, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" }
-    );
+    flash.style.left = `${cx - 60}px`;
+    flash.style.top = `${cy - 60}px`;
+    frag.appendChild(flash);
+    jobs.push([flash,
+      [{ transform: "scale(0.2)", opacity: 0.95 }, { transform: "scale(1.6)", opacity: 0 }],
+      { duration: 220, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" }]);
 
     // shards
     for (let i = 0; i < SHARDS; i++) {
@@ -96,7 +109,6 @@
       // size: a few big pieces, lots of crumbs
       const size = 7 + Math.pow(Math.random(), 1.8) * 42;
       const w = size * rand(0.7, 1.3), h = size * rand(0.7, 1.3);
-      // start: around the impact point, wider for small pieces
       const spread = 18 + Math.max(0, 48 - size) * 0.8;
       const x = clamp(cx + rand(-spread, spread) - w / 2, GLASS_INSET, W - GLASS_INSET - w);
       const y = clamp(cy + rand(-spread, spread) - h / 2, GLASS_INSET, H - GLASS_INSET - h);
@@ -107,16 +119,18 @@
       shard.style.height = `${h}px`;
       shard.style.clipPath = shardShape();
       if (pic) {
-        // the piece of the picture that was under this shard
+        // the piece of the picture that was under this shard, with a glassy sheen
         shard.style.backgroundImage =
           `linear-gradient(135deg, rgba(255,255,255,.6), rgba(255,255,255,.05) 35%, rgba(255,255,255,0) 55%, rgba(255,255,255,.25) 80%, rgba(255,255,255,.5)), url("${pic.url}")`;
         shard.style.backgroundSize = `100% 100%, ${bgW}px ${bgH}px`;
-        shard.style.backgroundPosition =
-          `0 0, ${bgX + GLASS_INSET - x}px ${bgY + GLASS_INSET - y}px`;
+        shard.style.backgroundPosition = `0 0, ${bgX + GLASS_INSET - x}px ${bgY + GLASS_INSET - y}px`;
       }
-      layer.appendChild(shard);
+      const glint = document.createElement("div");
+      glint.className = "shard__glint";
+      shard.appendChild(glint);
+      frag.appendChild(shard);
 
-      // flight: out from the impact, up, then falling (gravity); small pieces fly further
+      // flight: out from the impact, up, then falling; small pieces fly further
       const ang = Math.atan2(y + h / 2 - cy, x + w / 2 - cx) + rand(-0.5, 0.5);
       const power = rand(130, 260) * (1.35 - size / 60);
       const dx = Math.cos(ang) * power;
@@ -124,35 +138,27 @@
       const fall = rand(120, 220);
       const ax = rand(-1, 1).toFixed(2), ay = rand(-1, 1).toFixed(2), az = rand(-0.3, 0.3).toFixed(2);
       const spin = rand(240, 620) * (Math.random() < 0.5 ? -1 : 1);
-      const dur = rand(560, 760);
-      const glintAt = rand(0.2, 0.55); // when the face catches the light
+      const dur = rand(480, 640);
+      const glintAt = rand(0.2, 0.55);
 
-      // flight: fast burst decelerating to the top of the arc, then accelerating fall;
-      // fully visible for most of the flight, fading only at the end
-      shard.animate(
+      jobs.push([shard,
         [
-          { offset: 0, transform: "translate(0,0) rotate3d(0,0,1,0deg) scale(1)", easing: "cubic-bezier(.15,.8,.4,1)" },
-          { offset: 0.35, transform: `translate(${dx * 0.55}px, ${Math.sin(ang) * power * 0.45 - up}px) rotate3d(${ax},${ay},${az},${spin * 0.35}deg) scale(1)`, easing: "cubic-bezier(.5,0,.9,.55)" },
-          { offset: 1, transform: `translate(${dx}px, ${Math.sin(ang) * power * 0.6 - up + fall}px) rotate3d(${ax},${ay},${az},${spin}deg) scale(0.85)` },
+          { offset: 0, transform: "translate3d(0,0,0) rotate3d(0,0,1,0deg) scale(1)", opacity: 1, easing: "cubic-bezier(.15,.8,.4,1)" },
+          { offset: 0.35, transform: `translate3d(${dx * 0.55}px, ${Math.sin(ang) * power * 0.45 - up}px, 0) rotate3d(${ax},${ay},${az},${spin * 0.35}deg) scale(1)`, opacity: 1, easing: "cubic-bezier(.5,0,.9,.55)" },
+          { offset: 0.72, opacity: 1 },
+          { offset: 1, transform: `translate3d(${dx}px, ${Math.sin(ang) * power * 0.6 - up + fall}px, 0) rotate3d(${ax},${ay},${az},${spin}deg) scale(0.85)`, opacity: 0 },
         ],
-        { duration: dur, fill: "forwards" }
-      );
-      shard.animate(
-        [{ opacity: 1 }, { offset: 0.72, opacity: 1 }, { opacity: 0 }],
-        { duration: dur, fill: "forwards" }
-      );
-      // glint: a quick flash of brightness while tumbling; slightly brighter than the
-      // window at rest so the shards read as glass from the first frame
-      shard.animate(
+        { duration: dur, fill: "forwards" }]);
+      // glint: the white layer flashes once while the shard tumbles
+      jobs.push([glint,
         [
-          { offset: 0, filter: "brightness(1.25)" },
-          { offset: Math.max(0.05, glintAt - 0.08), filter: "brightness(1.15)" },
-          { offset: glintAt, filter: "brightness(2.6) saturate(.6)" },
-          { offset: Math.min(0.95, glintAt + 0.1), filter: "brightness(1.15)" },
-          { offset: 1, filter: "brightness(1.1)" },
+          { offset: 0, opacity: 0 },
+          { offset: Math.max(0.05, glintAt - 0.08), opacity: 0 },
+          { offset: glintAt, opacity: 0.85 },
+          { offset: Math.min(0.95, glintAt + 0.1), opacity: 0 },
+          { offset: 1, opacity: 0 },
         ],
-        { duration: dur, fill: "forwards" }
-      );
+        { duration: dur, fill: "forwards" }]);
     }
 
     // sparkles
@@ -163,27 +169,39 @@
       s.style.width = s.style.height = `${size}px`;
       s.style.left = `${cx - size / 2 + rand(-14, 14)}px`;
       s.style.top = `${cy - size / 2 + rand(-14, 14)}px`;
-      layer.appendChild(s);
+      frag.appendChild(s);
       const ang = rand(0, Math.PI * 2);
       const dist = rand(40, 120);
-      const delay = rand(0, 160);
-      s.animate(
+      const p = (k) => `translate3d(${Math.cos(ang) * dist * k}px, ${Math.sin(ang) * dist * k}px, 0)`;
+      jobs.push([s,
         [
-          { transform: "translate(0,0) scale(0) rotate(0deg)", opacity: 0 },
-          { offset: 0.25, transform: `translate(${Math.cos(ang) * dist * 0.4}px, ${Math.sin(ang) * dist * 0.4}px) scale(1.15) rotate(45deg)`, opacity: 1 },
-          { offset: 0.5, transform: `translate(${Math.cos(ang) * dist * 0.7}px, ${Math.sin(ang) * dist * 0.7}px) scale(0.5) rotate(90deg)`, opacity: 0.6 },
-          { offset: 0.7, transform: `translate(${Math.cos(ang) * dist * 0.85}px, ${Math.sin(ang) * dist * 0.85}px) scale(1) rotate(135deg)`, opacity: 1 },
-          { transform: `translate(${Math.cos(ang) * dist}px, ${Math.sin(ang) * dist + 20}px) scale(0) rotate(180deg)`, opacity: 0 },
+          { transform: `${p(0)} scale(0) rotate(0deg)`, opacity: 0 },
+          { offset: 0.25, transform: `${p(0.4)} scale(1.15) rotate(45deg)`, opacity: 1 },
+          { offset: 0.5, transform: `${p(0.7)} scale(0.5) rotate(90deg)`, opacity: 0.6 },
+          { offset: 0.7, transform: `${p(0.85)} scale(1) rotate(135deg)`, opacity: 1 },
+          { transform: `translate3d(${Math.cos(ang) * dist}px, ${Math.sin(ang) * dist + 20}px, 0) scale(0) rotate(180deg)`, opacity: 0 },
         ],
-        { duration: rand(420, 620), delay, easing: "ease-out", fill: "both" }
-      );
+        { duration: rand(400, 560), delay: rand(0, 120), easing: "ease-out", fill: "both" }]);
     }
+
+    // insert everything at once, then start all animations in the same frame
+    layer.appendChild(frag);
+    for (const [el, kf, opt] of jobs) el.animate(kf, opt);
 
     // clean up after the animation so the DOM does not grow
     setTimeout(() => { layer.innerHTML = ""; }, 1000);
   }
 
-  function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+  // Start downloading the target page early, so leaving does not stall the animation
+  const prefetched = new Set();
+  function prefetch(href) {
+    if (!href || prefetched.has(href)) return;
+    prefetched.add(href);
+    const link = document.createElement("link");
+    link.rel = "prefetch";
+    link.href = href;
+    document.head.appendChild(link);
+  }
 
   function onReady(fn) {
     if (document.readyState === "loading") {
@@ -198,14 +216,16 @@
     if (!e.persisted) return;
     document.querySelectorAll(".window.is-broken").forEach((w) => {
       w.classList.remove("is-broken");
-      const layer = w.querySelector(".shards");
-      if (layer) layer.innerHTML = "";
+      if (w._shardLayer) w._shardLayer.innerHTML = "";
     });
   });
 
   onReady(() => {
     document.querySelectorAll(".window").forEach((w) => {
       pictureOf(w); // preload the picture size for the shards
+      const href = w.getAttribute("href");
+      w.addEventListener("pointerenter", () => prefetch(href));
+      w.addEventListener("focus", () => prefetch(href));
 
       w.addEventListener("click", (e) => {
         // Let the browser handle "open in new tab/window" clicks and users who disabled animations
@@ -213,7 +233,6 @@
         if (reducedMotion.matches) return;
 
         e.preventDefault();
-        const href = w.getAttribute("href");
 
         // already broken: go right away
         if (w.classList.contains("is-broken")) {

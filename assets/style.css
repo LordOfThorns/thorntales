@@ -460,54 +460,58 @@ footer.wrap.bottom{
       rgba(255,255,255,.55) 0 2px,
       rgba(255,255,255,0) 3px 100%
     );
-  mix-blend-mode: screen;
+  /* no blend mode: it would make the browser re-blend everything under the cracks */
 }
 
 /* трещины на мгновение, потом стекло исчезает, картинка зумится */
-.window.is-broken .lead{
-  opacity: 0;
-  filter: blur(1px);
-}
+/* only opacity here: a blur filter would be redrawn every frame */
+.window.is-broken .lead{ opacity: 0; }
 .window.is-broken .lead::after{ opacity: 1; }
 .window.is-broken .img{ transform: scale(2); }
 
-/* осколки */
-.window .shards{
+/* Слой эффекта разбивания: лежит поверх страницы над окном (main.js ставит его
+   координаты). Не внутри .window: там он оказался бы под фильтром тени окна,
+   и тень пересчитывалась бы на каждом кадре. Анимируются только transform и opacity. */
+.shards{
   position: absolute;
-  inset: 0;
+  z-index: 20;
   pointer-events: none;
-  overflow: visible; /* осколки вылетают наружу */
   perspective: 420px; /* осколки кувыркаются в 3D */
-  z-index: 3;
 }
 
-/* осколок: кусочек картинки витража (фон задаёт main.js), полёт и блеск — через JS */
-.window .shard{
+/* осколок: кусочек картинки витража (фон задаёт main.js) */
+.shards .shard{
   position: absolute;
   background-color: rgba(200, 215, 255, 0.35);
   background-repeat: no-repeat;
   backface-visibility: visible;
-  will-change: transform, opacity, filter;
+  will-change: transform, opacity;
+}
+
+/* блик: белый слой, у которого меняется только прозрачность */
+.shards .shard__glint{
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,.95), rgba(235,242,255,.75));
+  opacity: 0;
+  will-change: opacity;
 }
 
 /* вспышка удара */
-.window .impact{
+.shards .impact{
   position: absolute;
   width: 120px;
   height: 120px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,255,255,.95) 0 12%, rgba(220,230,255,.55) 30%, rgba(200,210,255,0) 70%);
-  mix-blend-mode: screen;
-  pointer-events: none;
+  background: radial-gradient(circle, rgba(255,255,255,.9) 0 12%, rgba(225,232,255,.45) 30%, rgba(200,210,255,0) 70%);
+  will-change: transform, opacity;
 }
 
 /* искра: четырёхлучевая звёздочка */
-.window .sparkle{
+.shards .sparkle{
   position: absolute;
   background: radial-gradient(circle, #fff 0 18%, rgba(255,246,214,.9) 30%, rgba(255,255,255,0) 62%);
   clip-path: polygon(50% 0%, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0% 50%, 40% 40%);
-  mix-blend-mode: screen;
-  pointer-events: none;
   will-change: transform, opacity;
 }
 
