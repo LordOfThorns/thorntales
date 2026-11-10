@@ -1512,3 +1512,5 @@ textarea.input{
   border-radius: 3px;
   box-shadow: 0 0 0 1px rgba(255,255,255,.25) inset;
 }
+
+.map-tip__level{ color: var(--muted); }

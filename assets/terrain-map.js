@@ -1776,6 +1776,8 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
 	window.TerrainMap.lastMode = mode;
 	window.TerrainMap.lastBiomeIds = biomeIds; // for the hover tooltip (0 = sea)
 	window.TerrainMap.lastSize = n;
+	window.TerrainMap.lastHeights = h;
+	window.TerrainMap.lastSeaLevel = seaLevel;
 
 drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf, seed, down);
 	
@@ -1785,5 +1787,6 @@ drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, de
   window.TerrainMap = {
     render, biomeColors: ATLAS_BIOMES, atlas: ATLAS,
     lastMode: null, lastBiomeIds: null, lastLake: null, lastSize: 0,
+    lastHeights: null, lastSeaLevel: 0,
   };
 })();
