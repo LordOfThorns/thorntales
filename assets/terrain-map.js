@@ -194,20 +194,68 @@ function sampleHeightNearest(h, n, u, v) {
     const cmax = Math.max(cmin, continentsMax | 0);
     const continents = cmin + ((rng() * (cmax - cmin + 1)) | 0);
 
-    const centers = [];
-    for (let i = 0; i < continents; i++) {
-      const cx = 0.12 + rng() * 0.76;
-      const cy = 0.12 + rng() * 0.76;
-      const sx = 0.10 + rng() * 0.20;
-      const sy = 0.10 + rng() * 0.20;
+    // Each continent is a chain of rotated, elongated blobs along a bending spine:
+    // bulky in the middle, tapering to the ends (peninsulas). Sometimes a side branch
+    // (a large peninsula) and sometimes a negative blob that bites out a bay or inland sea.
+    const blobs = [];
+    for (let c = 0; c < continents; c++) {
+      const size = 0.08 + rng() * 0.10;
       const w = 0.8 + rng() * 1.0;
-      centers.push({ cx, cy, sx, sy, w });
+      const nodes = 3 + ((rng() * 4) | 0);
+      const step = size * 0.85;
+      let dir = rng() * Math.PI * 2;
+      let x = 0.18 + rng() * 0.64 - Math.cos(dir) * step * (nodes - 1) / 2;
+      let y = 0.18 + rng() * 0.64 - Math.sin(dir) * step * (nodes - 1) / 2;
+      const spine = [];
+
+      for (let j = 0; j < nodes; j++) {
+        const t = nodes > 1 ? j / (nodes - 1) : 0.5;
+        const taper = (0.5 + 0.5 * Math.sin(Math.PI * t)) * (0.85 + 0.3 * rng());
+        blobs.push({
+          x, y, ang: dir,
+          rx: size * taper * (1.2 + rng() * 0.8),   // along the spine
+          ry: size * taper * (0.7 + rng() * 0.4),   // across
+          w: w * 0.62,
+        });
+        spine.push({ x, y, dir, taper });
+        dir += (rng() - 0.5) * 1.1;
+        x += Math.cos(dir) * step;
+        y += Math.sin(dir) * step;
+      }
+
+      // side branch: a large peninsula
+      if (rng() < 0.6) {
+        const s = spine[(rng() * spine.length) | 0];
+        let bdir = s.dir + (rng() < 0.5 ? -1 : 1) * (0.8 + rng() * 0.8);
+        let bx = s.x, by = s.y;
+        const parts = 2 + ((rng() * 2) | 0);
+        for (let j = 1; j <= parts; j++) {
+          const k = 1 - j / (parts + 1);
+          bx += Math.cos(bdir) * step * 0.7;
+          by += Math.sin(bdir) * step * 0.7;
+          blobs.push({ x: bx, y: by, ang: bdir, rx: size * 0.55 * k + 0.01, ry: size * 0.32 * k + 0.008, w: w * 0.62 });
+          bdir += (rng() - 0.5) * 0.8;
+        }
+      }
+
+      // bay or inland sea
+      if (rng() < 0.45) {
+        const s = spine[(rng() * spine.length) | 0];
+        const side = rng() < 0.5 ? -1 : 1;
+        const off = size * (0.3 + rng() * 0.5);
+        blobs.push({
+          x: s.x + Math.cos(s.dir + side * Math.PI / 2) * off,
+          y: s.y + Math.sin(s.dir + side * Math.PI / 2) * off,
+          ang: s.dir, rx: size * (0.35 + rng() * 0.3), ry: size * (0.25 + rng() * 0.2), w: -w * 0.55,
+        });
+      }
     }
+    for (const b of blobs) { b.cos = Math.cos(b.ang); b.sin = Math.sin(b.ang); }
 
     function warp(u, v) {
       const wx = fbm(u * 2.0, v * 2.0, seed + 900, 3, 2.0, 0.5) - 0.5;
       const wy = fbm(u * 2.0, v * 2.0, seed + 901, 3, 2.0, 0.5) - 0.5;
-      return [u + wx * 0.08, v + wy * 0.08];
+      return [u + wx * 0.10, v + wy * 0.10];
     }
 
     for (let y = 0; y < n; y++) {
@@ -217,12 +265,14 @@ function sampleHeightNearest(h, n, u, v) {
         const [u, v] = warp(u0, v0);
 
         let cont = 0;
-        for (let k = 0; k < centers.length; k++) {
-          const c = centers[k];
-          const dx = (u - c.cx) / c.sx;
-          const dy = (v - c.cy) / c.sy;
-          const g = Math.exp(-(dx * dx + dy * dy));
-          cont += g * c.w;
+        for (let k = 0; k < blobs.length; k++) {
+          const b = blobs[k];
+          const dx = u - b.x, dy = v - b.y;
+          const along = (dx * b.cos + dy * b.sin) / b.rx;
+          const across = (-dx * b.sin + dy * b.cos) / b.ry;
+          const q = along * along + across * across;
+          if (q > 12) continue; // negligible, skip exp
+          cont += Math.exp(-q) * b.w;
         }
 
         cont = cont / (continents * 0.95);
@@ -268,14 +318,21 @@ function sampleHeightNearest(h, n, u, v) {
 
       // oceanic vs continental tendency (decides which side of a collision gets the range)
       const type = rng() < 0.55 ? 0 : 1; // 0 oceanic, 1 continental
-      p.push({ x, y, vx, vy, type });
+      // Size radius with a heavy tail: most plates are small, a few are giant
+      // (like Earth). Bigger r pushes the plate's edges outwards.
+      const r = PLATE_R_MAX * Math.pow(rng(), 3);
+      p.push({ x, y, vx, vy, type, r2: r * r });
     }
     return p;
   }
 
-  // For each cell: nearest plate A, second nearest B and the exact distance to the
-  // A|B Voronoi edge. The lookup position is domain-warped so plate edges curve
-  // instead of being straight segments.
+  const PLATE_R_MAX = 0.32;
+
+  // Power diagram (weighted Voronoi with score = distance^2 - r^2): plates get very
+  // different sizes, cells stay convex (no ring-shaped microplates) and the edge
+  // between two plates is still a straight line, so the distance to it is exact.
+  // For each cell: nearest plate A, second nearest B and the distance to the A|B edge.
+  // The lookup position is domain-warped so edges wobble.
   const PLATE_WARP = 0.10;
 
   function computePlateFields(n, plates, seed) {
@@ -292,17 +349,16 @@ function sampleHeightNearest(h, n, u, v) {
 
         let a = 0, b = 0, da = Infinity, db = Infinity;
         for (let k = 0; k < plates.length; k++) {
-          const dx = u - plates[k].x;
-          const dy = v - plates[k].y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 < da) { db = da; b = a; da = d2; a = k; }
-          else if (d2 < db) { db = d2; b = k; }
+          const dx = u - plates[k].x, dy = v - plates[k].y;
+          const s = dx * dx + dy * dy - plates[k].r2;
+          if (s < da) { db = da; b = a; da = s; a = k; }
+          else if (s < db) { db = s; b = k; }
         }
 
         const i = idx(x, y, n);
         ids[i] = a;
         ids2[i] = b;
-        // distance from p to the perpendicular bisector of A and B
+        // distance from p to the A|B power line
         const A = plates[a], B = plates[b];
         const ab = Math.hypot(B.x - A.x, B.y - A.y) + 1e-9;
         edge[i] = (db - da) / (2 * ab);
@@ -458,7 +514,112 @@ function sampleHeightNearest(h, n, u, v) {
   const PLATEAU_HEIGHT = 0.10;  // broad uplands in some regions
   const HILLS_HEIGHT = 0.07;
 
-  const MOUNTAINS_SCALE = 3.0;   // normalised uplift (top 1% = 1) x Mountains slider (0.18) x this
+  // -------------------- Coast types --------------------
+  // Fjords on cold mountainous coasts; smooth coasts with sand bars and lagoons on warm
+  // lowland coasts (only in some stretches, chosen by noise). Distances are in px at 768.
+  const FJORD_REACH = 34;       // how far inland fjords cut
+  const FJORD_DEPTH = 0.32;
+  const SMOOTH_REACH = 7;       // band around the coastline that gets smoothed
+  const BAR_FROM = 4, BAR_TO = 6; // sand bar distance from the shore
+  const BAR_MAX_DEPTH = 0.08;   // only over shallow water (depth as share of sea level)
+
+  // Breadth-first distance (4-neighbour, in cells) from every cell where src is 1
+  function bfsDistance(src, n, maxDist) {
+    const dist = new Int16Array(n * n).fill(-1);
+    const queue = new Int32Array(n * n);
+    let qh = 0, qt = 0;
+    for (let i = 0; i < src.length; i++) if (src[i]) { dist[i] = 0; queue[qt++] = i; }
+    while (qh < qt) {
+      const i = queue[qh++];
+      const d = dist[i];
+      if (d >= maxDist) continue;
+      const x = i % n, y = (i / n) | 0;
+      if (x > 0 && dist[i - 1] < 0) { dist[i - 1] = d + 1; queue[qt++] = i - 1; }
+      if (x < n - 1 && dist[i + 1] < 0) { dist[i + 1] = d + 1; queue[qt++] = i + 1; }
+      if (y > 0 && dist[i - n] < 0) { dist[i - n] = d + 1; queue[qt++] = i - n; }
+      if (y < n - 1 && dist[i + n] < 0) { dist[i + n] = d + 1; queue[qt++] = i + n; }
+    }
+    return dist;
+  }
+
+  function shapeCoasts(h, n, seed, seaLevel) {
+    const N = n * n;
+    const px = n / 768;
+    const isSea = new Uint8Array(N), isLand = new Uint8Array(N);
+    for (let i = 0; i < N; i++) { if (h[i] <= seaLevel) isSea[i] = 1; else isLand[i] = 1; }
+    const reach = Math.ceil(Math.max(FJORD_REACH, SMOOTH_REACH, BAR_TO + 1) * px);
+    const toSea = bfsDistance(isSea, n, reach);   // on land: distance to the sea
+    const toLand = bfsDistance(isLand, n, reach); // in the sea: distance to land
+
+    // Per cell: how cold (same bent latitude as computeTemperature) and which coast style
+    const cold = new Float32Array(N);
+    const smoothType = new Float32Array(N);
+    for (let y = 0; y < n; y++) {
+      const v = y / (n - 1);
+      for (let x = 0; x < n; x++) {
+        const i = idx(x, y, n);
+        if (toSea[i] < 0 && toLand[i] < 0) continue; // far from any coast
+        const u = x / (n - 1);
+        const warp = (fbm(u * 2.5, v * 2.5, seed + 800, 3, 2.0, 0.5) - 0.5) * 2 * TEMP_LAT_WARP;
+        const lat = clamp(Math.abs(v - 0.5) * 2.0 + warp, 0, 1);
+        cold[i] = smoothstep(clamp((lat - 0.55) / 0.2, 0, 1));
+        smoothType[i] = smoothstep(clamp((fbm(u * 3, v * 3, seed + 1250, 3, 2.0, 0.5) - 0.48) * 5, 0, 1))
+          * (1 - cold[i]);
+      }
+    }
+
+    // Fjords: narrow branching channels (ridge lines of ridged noise) cut into cold
+    // mountainous coasts, deepest at the shore, fading inland
+    const fjordReach = FJORD_REACH * px;
+    for (let y = 0; y < n; y++) {
+      const v = y / (n - 1);
+      for (let x = 0; x < n; x++) {
+        const i = idx(x, y, n);
+        const d = toSea[i];
+        if (d <= 0 || d > fjordReach || cold[i] <= 0) continue;
+        const relief = clamp((h[i] - seaLevel - 0.015) / 0.05, 0, 1); // hilly or mountainous coasts
+        if (relief <= 0) continue;
+        const u = x / (n - 1);
+        const lines = ridged(u * 26, v * 26, seed + 1300, 3);
+        const channel = smoothstep(clamp((lines - 0.6) / 0.2, 0, 1));
+        const fade = Math.pow(1 - d / fjordReach, 0.6);
+        h[i] -= channel * fade * Math.sqrt(cold[i] * relief) * FJORD_DEPTH;
+      }
+    }
+
+    // Smooth coasts: blend heights near the shoreline towards a blurred copy
+    const soft = blurred(h, n, Math.max(2, Math.round(5 * px)));
+    const smoothReach = SMOOTH_REACH * px;
+    for (let i = 0; i < N; i++) {
+      const s = smoothType[i];
+      if (s <= 0) continue;
+      const d = toSea[i] >= 0 && isLand[i] ? toSea[i] : (toLand[i] >= 0 ? toLand[i] : 999);
+      if (d > smoothReach) continue;
+      const k = s * (1 - d / (smoothReach + 1));
+      // never raise mountains or deepen open sea much: blend only near sea level
+      if (Math.abs(h[i] - seaLevel) > 0.06) continue;
+      h[i] = lerp(h[i], soft[i], k);
+    }
+
+    // Sand bars over shallow water in front of smooth coasts; gaps keep lagoons open
+    const barFrom = BAR_FROM * px, barTo = BAR_TO * px;
+    for (let y = 0; y < n; y++) {
+      const v = y / (n - 1);
+      for (let x = 0; x < n; x++) {
+        const i = idx(x, y, n);
+        if (h[i] > seaLevel || smoothType[i] < 0.35) continue;
+        const d = toLand[i];
+        if (d < barFrom || d > barTo) continue;
+        const depth = (seaLevel - h[i]) / seaLevel;
+        if (depth > BAR_MAX_DEPTH) continue;
+        const u = x / (n - 1);
+        if (fbm(u * 40, v * 40, seed + 1270, 2, 2.0, 0.5) < 0.38) continue; // inlets
+        h[i] = seaLevel + 0.003;
+      }
+    }
+  }
+
+  const MOUNTAINS_SCALE =3.0;   // normalised uplift (top 1% = 1) x Mountains slider (0.18) x this
   const MOUNTAINS_AT_SEA = 0.25;
 
   function shapeLand(h, n, seed, seaLevel) {
@@ -718,16 +879,24 @@ function sampleHeightNearest(h, n, u, v) {
 
   // -------------------- Climate --------------------
 
-  function computeTemperature(h, n, seaLevel) {
+  // Latitude is bent by noise (warm and cold tongues, like ocean currents and air masses),
+  // so climate zones are not straight horizontal bands.
+  const TEMP_LAT_WARP = 0.16;
+  const TEMP_LOCAL = 0.05;
+
+  function computeTemperature(h, n, seaLevel, seed) {
     const t = new Float32Array(n * n);
     for (let y = 0; y < n; y++) {
-      const lat = Math.abs((y / (n - 1)) - 0.5) * 2.0; // 0 equator -> 1 poles
-      // base temperature curve (nonlinear: wider tropics)
-      const base = 1.0 - Math.pow(lat, 1.2);
-
+      const v = y / (n - 1);
       for (let x = 0; x < n; x++) {
+        const u = x / (n - 1);
         const i = idx(x, y, n);
         const height = h[i];
+        const warp = (fbm(u * 2.5, v * 2.5, seed + 800, 3, 2.0, 0.5) - 0.5) * 2 * TEMP_LAT_WARP;
+        const lat = clamp(Math.abs(v - 0.5) * 2.0 + warp, 0, 1); // 0 equator -> 1 poles
+        // base temperature curve (nonlinear: wider tropics) + local variation
+        const base = 1.0 - Math.pow(lat, 1.2)
+          + (fbm(u * 8, v * 8, seed + 810, 2, 2.0, 0.5) - 0.5) * 2 * TEMP_LOCAL;
 
         // altitude cooling (only above sea)
         const alt = Math.max(0, (height - seaLevel) / (1 - seaLevel + 1e-9));
@@ -753,6 +922,11 @@ function sampleHeightNearest(h, n, u, v) {
   // Every cell gets its moisture from the whole upwind area, not from one traced line,
   // so the result follows coasts and mountains instead of wind streamlines.
   // Returns rain index 0..1 per pixel (ocean = 1).
+  // Measured on 5 seeds, share of land pixels on a zone border: per-gully lift 14.7%,
+  // no orography 5.7%, smoothed (6 cells, x2) 7.9%: ranges still cast rain shadows.
+  const OROGRAPHY_SMOOTH = 6;  // coarse cells (1 cell = 4 px at 768)
+  const OROGRAPHY_GAIN = 2;    // compensates the lower slopes of the smoothed height
+
   function computeRain(h, n, seaLevel, temp, wind, desertStrength) {
     const ds = clamp(desertStrength ?? 0.35, 0, 1);
     const cg = Math.min(n, 192);       // coarse grid size
@@ -804,12 +978,17 @@ function sampleHeightNearest(h, n, u, v) {
         WY[j] = w.vy * w.spd * dt;
       }
     }
+    // Lift is taken from a smoothed height: rain shadows belong to whole ranges,
+    // not to every gully (per-gully lift made wet/dry stripes on every eroded slope)
+    const oroR = OROGRAPHY_SMOOTH;
+    const HS = oroR > 0 ? blurred(H, cg, oroR) : H;
+    const oroK = oroR > 0 ? OROGRAPHY_GAIN : 1;
     for (let y = 0; y < cg; y++) {
       for (let x = 0; x < cg; x++) {
         const xm = Math.max(0, x - 1), xp = Math.min(cg - 1, x + 1);
         const ym = Math.max(0, y - 1), yp = Math.min(cg - 1, y + 1);
-        const gx = (H[idx(xp, y, cg)] - H[idx(xm, y, cg)]) * 0.5;
-        const gy = (H[idx(x, yp, cg)] - H[idx(x, ym, cg)]) * 0.5;
+        const gx = (HS[idx(xp, y, cg)] - HS[idx(xm, y, cg)]) * 0.5 * oroK;
+        const gy = (HS[idx(x, yp, cg)] - HS[idx(x, ym, cg)]) * 0.5 * oroK;
         const j = idx(x, y, cg);
         LIFT[j] = WX[j] * gx + WY[j] * gy;
       }
@@ -987,30 +1166,167 @@ function sampleHeightNearest(h, n, u, v) {
   // saturated ocean with a light glow along the coast, periwinkle rivers.
 
   const ATLAS = {
-    lowland: [204, 224, 164],      // height mode base (no biomes)
-    ink: [72, 74, 46],             // elevation layers
-    inkAlpha: 0.13,
+    lowland: [158, 194, 132],      // height mode base (no biomes)
+    ink: [62, 66, 44],             // elevation layers
+    inkAlpha: 0.12,
     layers: [0.08, 0.18, 0.30, 0.44, 0.60, 0.78],
     snow: [238, 238, 244],
-    oceanDeep: [22, 44, 128],
-    oceanMid: [38, 82, 172],
-    oceanShelf: [84, 140, 214],
-    glow: [176, 222, 236],         // wide soft halo in the water
-    rim: [236, 244, 214],          // narrow bright line at the shore
+    // Sea depth steps, like a nautical chart: depth = (sea - h) / sea, band up to `to`
+    depthBands: [
+      { to: 0.03, c: [96, 178, 192] },   // shallows
+      { to: 0.08, c: [70, 150, 194] },   // shelf
+      { to: 0.15, c: [52, 120, 186] },
+      // deep steps close in colour: open sea stays calm instead of blotchy
+      { to: 0.25, c: [40, 92, 168] },
+      { to: 0.40, c: [36, 82, 158] },
+      { to: 1.01, c: [32, 72, 148] },    // deep sea
+    ],
     shore: [226, 232, 190],        // pale edge on the land side
-    river: [104, 118, 222],
-    lake: [150, 160, 240],
+    river: [56, 118, 188],         // same blue family as the sea
+    lake: [74, 152, 196],          // like the shelf band
   };
 
   // Seabed depth as a share of sea level. Measured near coasts: 1-3 px out the median
   // depth is ~0.03, 8-12 px out it ranges ~0.08..0.28, so the shelf width varies a lot.
-  const SHALLOW_DEPTH = 0.025;   // bright shallows
-  const SHELF_FULL_DEPTH = 0.02; // shelf glow at full strength above this depth
-  const SHELF_EDGE_DEPTH = 0.14; // and gone below this depth
+  const SHORE_SHALLOW_DEPTH = 0.06; // pale shore on land only next to water this shallow
 
   const LAKE_MIN_DEPTH = 0.004; // filled depth (height units) to count as a lake
   const LAKE_MIN_RAIN = 0.3;    // drier basins stay dry
   const LAKE_MIN_AREA = 30;     // pixels at size 768 (scaled with map area); smaller ones are noise
+
+  // -------------------- Meandering rivers --------------------
+  // Every river is traced from its source along the flow directions until it joins
+  // another river, a lake or the sea. The cell path is smoothed (Chaikin corner
+  // cutting), then bent sideways by a wave whose wavelength and amplitude grow with
+  // the river's size; on steep ground the bends fade out. Ends stay fixed so
+  // tributaries meet their river. Lines are drawn anti-aliased, wider downstream.
+  const MEANDER_AMP = 3.8;        // px at 768, for a big lowland river
+  const MEANDER_WAVE = 20;        // px at 768, for a big river
+  const MEANDER_FLAT_SLOPE = 0.006; // above this slope (per px at 768) bends fade out
+
+  function chaikin(pts, passes) {
+    let p = pts;
+    for (let k = 0; k < passes; k++) {
+      if (p.length < 3) return p;
+      const out = [p[0]];
+      for (let i = 0; i < p.length - 1; i++) {
+        const a = p[i], b = p[i + 1];
+        out.push({ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25, f: a.f * 0.75 + b.f * 0.25 });
+        out.push({ x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75, f: a.f * 0.25 + b.f * 0.75 });
+      }
+      out.push(p[p.length - 1]);
+      p = out;
+    }
+    return p;
+  }
+
+  function rasterizeRivers(h, acc, down, n, seaLevel, threshold, lake, openSea, seed) {
+    const N = n * n;
+    const px = n / 768;
+    const out = new Float32Array(N);
+    if (!down) return out;
+
+    const isRiver = new Uint8Array(N);
+    let accMax = 1;
+    for (let i = 0; i < N; i++) {
+      if (openSea[i] || lake[i] || acc[i] <= threshold) continue;
+      isRiver[i] = 1;
+      if (acc[i] > accMax) accMax = acc[i];
+    }
+    const logThr = Math.log(Math.max(2, threshold));
+    const logMax = Math.log(accMax + 1e-9);
+    const flowT = (a) => clamp((Math.log(Math.max(a, 1)) - logThr) / (logMax - logThr + 1e-9), 0, 1);
+
+    const hasDonor = new Uint8Array(N);
+    for (let i = 0; i < N; i++) if (isRiver[i] && down[i] >= 0 && isRiver[down[i]]) hasDonor[down[i]] = 1;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = n; canvas.height = n;
+    const g = canvas.getContext('2d');
+    g.strokeStyle = '#fff';
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+
+    const visited = new Uint8Array(N);
+    const rng = mulberry32(seed + 4242);
+    for (let s = 0; s < N; s++) {
+      if (!isRiver[s] || hasDonor[s]) continue;
+      // trace downstream
+      const cells = [];
+      let i = s;
+      while (i >= 0 && isRiver[i] && !visited[i]) {
+        visited[i] = 1;
+        cells.push(i);
+        i = down[i];
+      }
+      if (i >= 0) cells.push(i); // the junction, lake shore or sea cell we ran into
+      if (cells.length < 2) continue;
+
+      let pts = cells.map((c) => ({ x: (c % n) + 0.5, y: ((c / n) | 0) + 0.5, f: flowT(acc[c]) }));
+      pts = chaikin(pts, 2);
+
+      // length along the path, for the wave phase and the end taper
+      const len = [0];
+      for (let k = 1; k < pts.length; k++) {
+        len.push(len[k - 1] + Math.hypot(pts[k].x - pts[k - 1].x, pts[k].y - pts[k - 1].y));
+      }
+      const total = len[len.length - 1];
+      let phase = rng() * Math.PI * 2;
+      const bent = pts.map((p, k) => {
+        const a = pts[Math.max(0, k - 1)], b = pts[Math.min(pts.length - 1, k + 1)];
+        let tx = b.x - a.x, ty = b.y - a.y;
+        const tl = Math.hypot(tx, ty) || 1;
+        tx /= tl; ty /= tl;
+        const ci = idx(clamp(p.x | 0, 0, n - 1), clamp(p.y | 0, 0, n - 1), n);
+        const cx = ci % n, cy = (ci / n) | 0;
+        const slope = Math.hypot(
+          h[idx(Math.min(n - 1, cx + 1), cy, n)] - h[idx(Math.max(0, cx - 1), cy, n)],
+          h[idx(cx, Math.min(n - 1, cy + 1), n)] - h[idx(cx, Math.max(0, cy - 1), n)]
+        ) * 0.5 / px;
+        const flat = 1 - smoothstep(clamp(slope / MEANDER_FLAT_SLOPE, 0, 1));
+        const wave = (8 + MEANDER_WAVE * p.f) * px;
+        if (k > 0) phase += ((len[k] - len[k - 1]) / wave) * Math.PI * 2 * (0.75 + 0.5 * valueNoise2(len[k] * 0.05, s * 0.01, seed + 4300));
+        const taper = clamp(Math.min(len[k], total - len[k]) / (wave * 0.5), 0, 1);
+        const amp = (0.6 + MEANDER_AMP * p.f) * px * flat * taper;
+        const off = Math.sin(phase) * amp;
+        return { x: p.x - ty * off, y: p.y + tx * off, f: p.f };
+      });
+
+      for (let k = 1; k < bent.length; k++) {
+        const a = bent[k - 1], b = bent[k];
+        g.lineWidth = (0.9 + 2.1 * b.f) * px;
+        g.beginPath();
+        g.moveTo(a.x, a.y);
+        g.lineTo(b.x, b.y);
+        g.stroke();
+      }
+    }
+
+    const data = g.getImageData(0, 0, n, n).data;
+    for (let i = 0; i < N; i++) out[i] = data[i * 4 + 3] / 255;
+    return out;
+  }
+
+  // 1 for cells at or below sea level that connect (4-neighbour) to the map edge
+  function connectedToEdge(h, n, seaLevel) {
+    const sea = new Uint8Array(n * n);
+    const queue = new Int32Array(n * n);
+    let qh = 0, qt = 0;
+    const push = (i) => { if (!sea[i] && h[i] <= seaLevel) { sea[i] = 1; queue[qt++] = i; } };
+    for (let k = 0; k < n; k++) {
+      push(idx(k, 0, n)); push(idx(k, n - 1, n));
+      push(idx(0, k, n)); push(idx(n - 1, k, n));
+    }
+    while (qh < qt) {
+      const i = queue[qh++];
+      const x = i % n, y = (i / n) | 0;
+      if (x > 0) push(i - 1);
+      if (x < n - 1) push(i + 1);
+      if (y > 0) push(i - n);
+      if (y < n - 1) push(i + n);
+    }
+    return sea;
+  }
 
   // Remove connected regions (8-neighbour) smaller than minArea from a 0/1 mask
   function dropSmallRegions(mask, n, minArea) {
@@ -1039,38 +1355,47 @@ function sampleHeightNearest(h, n, u, v) {
   }
 
   const ATLAS_BIOMES = {
-    1: [232, 205, 140],  // hot desert
-    2: [206, 193, 152],  // semi-arid / cold desert
-    3: [206, 204, 118],  // savanna
-    4: [94, 132, 104],   // taiga
-    5: [172, 176, 152],  // cold dry
-    6: ATLAS.snow,       // snow
-    7: [184, 206, 130],  // steppe
-    8: [120, 168, 94],   // seasonal forest
-    9: [94, 148, 88],    // temperate forest
-    10: [64, 128, 80],   // rainforest
-    11: [86, 140, 102],  // wet temperate
+    1: [208, 192, 142],  // hot desert
+    2: [178, 174, 148],  // cold desert / semi-arid
+    3: [176, 182, 112],  // savanna
+    4: [62, 104, 86],    // taiga
+    5: [146, 158, 140],  // tundra
+    6: ATLAS.snow,       // snow and ice
+    7: [152, 182, 116],  // steppe / grassland
+    8: [84, 140, 82],    // seasonal forest
+    9: [62, 122, 76],    // temperate forest
+    10: [34, 102, 70],   // rainforest
+    11: [48, 110, 90],   // temperate rainforest
+    12: [140, 152, 98],  // shrubland
+    13: [128, 150, 124], // alpine meadow
+    14: [126, 124, 120], // bare rock
+    15: [86, 128, 116],  // wetland
   };
 
-  // Border character changes across the map: in some regions borders are crisp and
-  // ragged, in others soft. BORDER_JAG_* is how far (px at 768) colours are pulled
-  // from neighbouring points, which makes edges ragged instead of smooth curves.
-  const BORDER_JAG_LARGE = 6;
-  const BORDER_JAG_SMALL = 2.5;
+  // Ragged borders: colours and heights are read from a point shifted by fine noise,
+  // so every border becomes jagged and crisp (no blending, no smudging).
+  // Amplitudes in px at size 768.
+  const BORDER_JAG = 3;      // ~25 px features
+  const BORDER_JAG_FINE = 1.6; // ~8 px features
 
   function smoothstep01(a, b, x) {
     const t = clamp((x - a) / (b - a), 0, 1);
     return t * t * (3 - 2 * t);
   }
 
-function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf, seed) {
+function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf, seed, down) {
   const img = ctx.createImageData(n, n);
   const data = img.data;
   const N = n * n;
   const px = n / 768; // scale effects with map size
 
+  // Sea = water below sea level that is connected to the map edge. Basins inside a
+  // continent that dip below sea level are lakes, not sea (otherwise they got ocean
+  // colours and a shelf glow inside lakes).
+  const openSea = connectedToEdge(h, n, seaLevel);
+
   // Lakes: filled depressions that are deep enough and not in dry climates
-  // (in deserts they stay dry basins). Soft edge via a light blur.
+  // (in deserts they stay dry basins), plus every inland basin below sea level
   const lake = new Float32Array(N);
   if (hf) {
     for (let i = 0; i < N; i++) {
@@ -1080,80 +1405,60 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
     }
     dropSmallRegions(lake, n, Math.round(LAKE_MIN_AREA * px * px));
   }
+  for (let i = 0; i < N; i++) if (h[i] <= seaLevel && !openSea[i]) lake[i] = 1;
   const lakeSoft = blurred(lake, n, Math.max(1, Math.round(1 * px)));
+  window.TerrainMap.lastLake = lake; // for the hover tooltip
 
-  // Rivers: strength 0..1 by log flow above the threshold, plus a soft halo so big
-  // rivers read wider downstream
-  let accMaxLand = 1;
-  for (let i = 0; i < N; i++) if (h[i] > seaLevel && acc[i] > accMaxLand) accMaxLand = acc[i];
-  const logThr0 = Math.log(Math.max(2, riverThreshold));
-  const logMax0 = Math.log(accMaxLand + 1e-9);
-  const river = new Float32Array(N);
-  for (let i = 0; i < N; i++) {
-    if (h[i] <= seaLevel || acc[i] <= riverThreshold || lake[i]) continue;
-    river[i] = 0.35 + 0.65 * clamp((Math.log(acc[i]) - logThr0) / (logMax0 - logThr0 + 1e-9), 0, 1);
-  }
-  const riverWide = blurred(river, n, Math.max(1, Math.round(1 * px)));
+  // Rivers: traced as smooth meandering lines (see rasterizeRivers), 0..1 coverage
+  const river = rasterizeRivers(h, acc, down, n, seaLevel, riverThreshold, lake, openSea, seed);
 
   // Land mask and per-pixel base colour
   const land = new Float32Array(N);
   const R = new Float32Array(N), G = new Float32Array(N), B = new Float32Array(N);
   const snow = new Float32Array(N);
   for (let i = 0; i < N; i++) {
-    if (h[i] <= seaLevel) continue;
-    land[i] = 1;
+    if (openSea[i]) continue;
+    land[i] = 1; // includes inland water, drawn as lake on top
     const c = mode === 'height' ? ATLAS.lowland : (ATLAS_BIOMES[biomeIds[i]] || ATLAS.lowland);
     R[i] = c[0]; G[i] = c[1]; B[i] = c[2];
     if (mode !== 'height' && biomeIds[i] === 6) snow[i] = 1;
   }
 
-  // Soft version of the colours (blur over land only, weighted by the land mask)
-  const rBorder = Math.max(1, Math.round(3 * px));
-  const wL = blurred(land, n, rBorder);
-  const bR = blurred(R, n, rBorder), bG = blurred(G, n, rBorder), bB = blurred(B, n, rBorder);
-  const snowSoft = blurred(snow, n, rBorder);
+  const snowSoft = blurred(snow, n, Math.max(1, Math.round(2 * px)));
 
-  // Heights: soft (rounded contours) and nearly raw (crisp contours)
-  const hs = blurred(h, n, Math.max(1, Math.round(4 * px)));
+  // Heights for the elevation layers: almost raw, so contours stay crisp
   const hc = blurred(h, n, 1);
 
-  // Per pixel: softness 0 (crisp, ragged) .. 1 (soft), and a jitter offset used to
-  // pick colour/height from a nearby point, which makes borders ragged
-  const soft = new Float32Array(N);
+  // Jitter offset per pixel: colour and height are taken from a nearby point,
+  // which turns every border into a crisp jagged line
   const jx = new Int32Array(N);
   const jy = new Int32Array(N);
-  const jagL = BORDER_JAG_LARGE * px, jagS = BORDER_JAG_SMALL * px;
+  const jag = BORDER_JAG * px, jagF = BORDER_JAG_FINE * px;
   for (let y = 0; y < n; y++) {
     const v = y / (n - 1);
     for (let x = 0; x < n; x++) {
       const i = idx(x, y, n);
-      if (!land[i]) continue;
       const u = x / (n - 1);
-      soft[i] = smoothstep01(0.35, 0.65, fbm(u * 3, v * 3, seed + 9100, 3, 2.0, 0.5));
-      const ox = (fbm(u * 10, v * 10, seed + 9110, 3, 2.0, 0.5) - 0.5) * 2 * jagL
-               + (fbm(u * 40, v * 40, seed + 9111, 2, 2.0, 0.5) - 0.5) * 2 * jagS;
-      const oy = (fbm(u * 10, v * 10, seed + 9120, 3, 2.0, 0.5) - 0.5) * 2 * jagL
-               + (fbm(u * 40, v * 40, seed + 9121, 2, 2.0, 0.5) - 0.5) * 2 * jagS;
+      const ox = (fbm(u * 30, v * 30, seed + 9110, 2, 2.0, 0.5) - 0.5) * 2 * jag
+               + (fbm(u * 95, v * 95, seed + 9111, 1, 2.0, 0.5) - 0.5) * 2 * jagF;
+      const oy = (fbm(u * 30, v * 30, seed + 9120, 2, 2.0, 0.5) - 0.5) * 2 * jag
+               + (fbm(u * 95, v * 95, seed + 9121, 1, 2.0, 0.5) - 0.5) * 2 * jagF;
       const sx = clamp(Math.round(x + ox), 0, n - 1);
       const sy = clamp(Math.round(y + oy), 0, n - 1);
       const j = idx(sx, sy, n);
-      // never pull a colour from the sea
-      jx[i] = land[j] ? sx : x;
-      jy[i] = land[j] ? sy : y;
+      // land never pulls a colour from the sea (water may pull from land: depth 0)
+      jx[i] = land[i] && !land[j] ? x : sx;
+      jy[i] = land[i] && !land[j] ? y : sy;
     }
   }
 
-  // Shelf: driven by the real seabed depth, not by distance to the coast, so it is wide
-  // where the bottom is shallow far out and almost absent off steep coasts.
-  // depth = (sea - h) / sea; lightly smoothed so contours are soft.
+  // Sea depth (follows the real seabed, so shelves are wide where the bottom is shallow
+  // far out and absent off steep coasts); a light blur keeps band edges from speckling
   const hSea = blurred(h, n, Math.max(1, Math.round(2 * px)));
-  const shelf = new Float32Array(N);   // 0..1, 1 = very shallow
-  const shallow = new Float32Array(N); // 0..1, the brightest near-zero depths
+  const seaDepth = (j) => (land[j] ? 0 : clamp((seaLevel - hSea[j]) / (seaLevel + 1e-9), 0, 1));
+  const shelf = new Float32Array(N); // 1 where the water is shallow
   for (let i = 0; i < N; i++) {
-    if (land[i]) continue;
-    const depth = clamp((seaLevel - hSea[i]) / (seaLevel + 1e-9), 0, 1);
-    shelf[i] = 1 - smoothstep01(SHELF_FULL_DEPTH, SHELF_EDGE_DEPTH, depth);
-    shallow[i] = 1 - smoothstep01(0, SHALLOW_DEPTH, depth);
+    if (!land[i] && seaDepth(i) < SHORE_SHALLOW_DEPTH) shelf[i] = 1;
   }
   // On land: how shallow the nearby water is (beaches on shallow coasts only),
   // and how close the water is
@@ -1167,30 +1472,24 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
       let r, g, b;
 
       if (!land[i]) {
-        // Ocean: depth gradient + coastal glow
-        const depth = clamp((seaLevel - h[i]) / (seaLevel + 1e-9), 0, 1);
-        const t = Math.pow(depth, 0.7);
-        const c1 = t < 0.5 ? ATLAS.oceanShelf : ATLAS.oceanMid;
-        const c2 = t < 0.5 ? ATLAS.oceanMid : ATLAS.oceanDeep;
-        const k = t < 0.5 ? t * 2 : (t - 0.5) * 2;
-        r = lerp(c1[0], c2[0], k); g = lerp(c1[1], c2[1], k); b = lerp(c1[2], c2[2], k);
-
-        const halo = Math.pow(shelf[i], 1.3) * 0.8;
-        r = lerp(r, ATLAS.glow[0], halo); g = lerp(g, ATLAS.glow[1], halo); b = lerp(b, ATLAS.glow[2], halo);
-        const rim = Math.pow(shallow[i], 1.5) * 0.85;
-        r = lerp(r, ATLAS.rim[0], rim); g = lerp(g, ATLAS.rim[1], rim); b = lerp(b, ATLAS.rim[2], rim);
+        // Ocean: stepped depth bands with jagged edges, a slight shade inside each band
+        const depth = seaDepth(idx(jx[i], jy[i], n));
+        const bands = ATLAS.depthBands;
+        let k = 0;
+        while (k < bands.length - 1 && depth > bands[k].to) k++;
+        const from = k > 0 ? bands[k - 1].to : 0;
+        const inBand = clamp((depth - from) / (bands[k].to - from), 0, 1);
+        const c = bands[k].c, cn = bands[Math.min(k + 1, bands.length - 1)].c;
+        const a = inBand * 0.18;
+        r = lerp(c[0], cn[0], a); g = lerp(c[1], cn[1], a); b = lerp(c[2], cn[2], a);
       } else {
-        // Colour: ragged (from the jittered point) blended with soft, by local softness
-        const s = soft[i];
+        // Colour from the jittered point: crisp, jagged borders
         const j = idx(jx[i], jy[i], n);
-        const w = wL[i] > 1e-6 ? 1 / wL[i] : 0;
-        r = lerp(R[j], bR[i] * w, s); g = lerp(G[j], bG[i] * w, s); b = lerp(B[j], bB[i] * w, s);
+        r = R[j]; g = G[j]; b = B[j];
 
-        // Elevation: stacked translucent ink layers, no rim. Crisp ragged contours where
-        // soft is low, smooth rounded ones where it is high.
-        const hl = lerp(hc[j], hs[i], s);
-        const alt = clamp((hl - seaLevel) / (1 - seaLevel + 1e-9), 0, 1);
-        const ew = lerp(0.003, 0.02, s);
+        // Elevation: stacked translucent ink layers with crisp jagged contours, no rim
+        const alt = clamp((hc[j] - seaLevel) / (1 - seaLevel + 1e-9), 0, 1);
+        const ew = 0.002;
         const inkK = 1 - 0.75 * snowSoft[i]; // keep snow fields light
         for (const level of ATLAS.layers) {
           const cover = smoothstep01(level - ew, level + ew, alt);
@@ -1215,7 +1514,7 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
         }
 
         // Rivers: the core line, and a wider soft band for strong rivers
-        const rv = Math.max(river[i] * 0.95, clamp(riverWide[i] * 2.2 - 0.25, 0, 1) * 0.8);
+        const rv = river[i] * 0.92 * (1 - lakeSoft[i]);
         if (rv > 0) {
           r = lerp(r, ATLAS.river[0], rv); g = lerp(g, ATLAS.river[1], rv); b = lerp(b, ATLAS.river[2], rv);
         }
@@ -1306,8 +1605,17 @@ function drawWindDebug(ctx, wind, n) {
   }
 }
 
-function biomeId(height, seaLevel, temp, rain, desertStrength) {
-  if (height <= seaLevel) return 0; // ocean
+// Biome ids (colours in ATLAS_BIOMES, names in i18n.js as biome.<id>)
+const BIOME = {
+  OCEAN: 0, HOT_DESERT: 1, COLD_DESERT: 2, SAVANNA: 3, TAIGA: 4, TUNDRA: 5, SNOW: 6,
+  STEPPE: 7, SEASONAL_FOREST: 8, TEMPERATE_FOREST: 9, RAINFOREST: 10, WET_TEMPERATE: 11,
+  SHRUBLAND: 12, ALPINE: 13, ROCK: 14, WETLAND: 15,
+};
+
+// slope: height difference to neighbours (height units per pixel at 768)
+// wet: the cell is on a big, slow river or by a lake (flat, lots of water)
+function biomeId(height, seaLevel, temp, rain, desertStrength, slope, wet) {
+  if (height <= seaLevel) return BIOME.OCEAN;
 
   const alt = (height - seaLevel) / (1 - seaLevel + 1e-9);
   const ds = clamp(desertStrength ?? 0.35, 0, 1);
@@ -1315,26 +1623,25 @@ function biomeId(height, seaLevel, temp, rain, desertStrength) {
 
   const desertCut = 0.18 + 0.18 * k;
   const steppeCut = 0.36 + 0.12 * k;
+  const shrubCut = steppeCut + 0.10;
 
-  if (temp < 0.14 || alt > 0.88) return 6; // snow
-  if (temp < 0.28) return (rain < 0.30) ? 5 : 4; // cold desert / taiga
+  if (temp < 0.12 || alt > 0.86) return BIOME.SNOW;
+  // high mountains: bare rock on steep or dry slopes, meadows elsewhere
+  if (alt > 0.68 || (alt > 0.45 && slope > 0.03)) return BIOME.ROCK;
+  if (alt > 0.5) return rain < 0.3 ? BIOME.ROCK : BIOME.ALPINE;
 
-  if (rain < desertCut) return (temp > 0.55) ? 1 : 2; // hot desert / cold semi-arid
-  if (rain < steppeCut) return (temp > 0.55) ? 3 : 7; // savanna / steppe
+  if (wet && temp > 0.25 && rain > 0.4) return BIOME.WETLAND;
 
-  if (rain < 0.65) return (temp > 0.55) ? 8 : 9; // seasonal / temperate forest
-  return (temp > 0.55) ? 10 : 11; // rainforest / wet temperate
-}
+  if (temp < 0.2) return BIOME.TUNDRA;
+  if (temp < 0.34) return rain < 0.28 ? BIOME.TUNDRA : BIOME.TAIGA;
 
-function biomeIdToColor(id, height, seaLevel) {
-  if (id === 0) return oceanColor(height, seaLevel);
-  // подставь свои цвета (ниже примерные)
-  const pal = {
-    1:[200,180,110], 2:[175,170,135], 3:[165,175, 80], 7:[120,165, 95],
-    4:[120,145,120], 5:[150,155,130], 6:[235,235,240],
-    8:[ 55,140, 80], 9:[ 45,125, 70],10:[ 35,120, 75],11:[ 55,120, 95],
-  };
-  return pal[id] ?? [255, 0, 255];
+  const hot = temp > 0.6;
+  if (rain < desertCut) return hot ? BIOME.HOT_DESERT : BIOME.COLD_DESERT;
+  if (rain < steppeCut) return hot ? BIOME.SAVANNA : BIOME.STEPPE;
+  if (rain < shrubCut) return temp > 0.45 ? BIOME.SHRUBLAND : BIOME.STEPPE;
+  if (temp < 0.42) return BIOME.TAIGA;
+  if (rain < 0.68) return hot ? BIOME.SEASONAL_FOREST : BIOME.TEMPERATE_FOREST;
+  return hot ? BIOME.RAINFOREST : BIOME.WET_TEMPERATE;
 }
 
 function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
@@ -1422,9 +1729,10 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
     // 4) Erosion (light) after tectonics
     streamErodeHalf(h, n, seaLevel, STREAM_ERODE_PASSES, STREAM_ERODE_K);
     thermalErode(h, n, 7, 0.017);
+    shapeCoasts(h, n, seed, seaLevel);
 
     // 5) Climate (before hydrology: river flow depends on rain)
-    const temp = computeTemperature(h, n, seaLevel);
+    const temp = computeTemperature(h, n, seaLevel, seed);
 	const desertStrength = clamp(opts.desertStrength ?? 0.35, 0, 1);
 	const windGrid = buildWindField(Math.max(96, Math.min(160, (n / 6) | 0)), seed);
 
@@ -1451,14 +1759,31 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
 	}
 	
 	const biomeIds = new Int16Array(n * n);
-	for (let i = 0; i < biomeIds.length; i++) {
-	  biomeIds[i] = biomeId(h[i], seaLevel, temp[i], rain[i], desertStrength);
+	const slopeScale = n / 768;
+	const wetFlow = Math.max(200, riverThreshold * 2);
+	for (let y = 0; y < n; y++) {
+	  for (let x = 0; x < n; x++) {
+	    const i = idx(x, y, n);
+	    const xm = Math.max(0, x - 1), xp = Math.min(n - 1, x + 1);
+	    const ym = Math.max(0, y - 1), yp = Math.min(n - 1, y + 1);
+	    const slope = Math.hypot(h[idx(xp, y, n)] - h[idx(xm, y, n)], h[idx(x, yp, n)] - h[idx(x, ym, n)]) * 0.5 * slopeScale;
+	    const wet = acc[i] > wetFlow && slope < 0.004;
+	    biomeIds[i] = biomeId(h[i], seaLevel, temp[i], rain[i], desertStrength, slope, wet);
+	  }
 	}
-	smoothBiomeIds(biomeIds, h, n, seaLevel, 3);
+	smoothBiomeIds(biomeIds, h, n, seaLevel, 2);
 
-drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf, seed);
+	window.TerrainMap.lastMode = mode;
+	window.TerrainMap.lastBiomeIds = biomeIds; // for the hover tooltip (0 = sea)
+	window.TerrainMap.lastSize = n;
+
+drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf, seed, down);
 	
   }
 
-  window.TerrainMap = { render };
+  // Colours and the last mode, for the legend (map-legend.js)
+  window.TerrainMap = {
+    render, biomeColors: ATLAS_BIOMES, atlas: ATLAS,
+    lastMode: null, lastBiomeIds: null, lastLake: null, lastSize: 0,
+  };
 })();
