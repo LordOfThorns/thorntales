@@ -1612,9 +1612,18 @@ const BIOME = {
   SHRUBLAND: 12, ALPINE: 13, ROCK: 14, WETLAND: 15,
 };
 
+// Altitudinal zonation: a mountain rising above its surroundings is wetter than the
+// plain around it (more orographic rain, less evaporation in cool air), so its slopes
+// get belts: desert -> steppe/shrubs -> forest -> alpine meadows -> rock -> snow.
+// Driven by height above the regional average (not absolute height), so wide high
+// plateaus can stay dry, like Tibet or the Altiplano.
+const MOUNTAIN_WET = 0.55;  // extra effective moisture on a strongly raised slope
+const RISE_FULL = 0.22;     // height above the surroundings (share of land range) for full effect
+
 // slope: height difference to neighbours (height units per pixel at 768)
 // wet: the cell is on a big, slow river or by a lake (flat, lots of water)
-function biomeId(height, seaLevel, temp, rain, desertStrength, slope, wet) {
+// rise: height above the regional average, as a share of the land height range
+function biomeId(height, seaLevel, temp, rain, desertStrength, slope, wet, rise) {
   if (height <= seaLevel) return BIOME.OCEAN;
 
   const alt = (height - seaLevel) / (1 - seaLevel + 1e-9);
@@ -1626,21 +1635,26 @@ function biomeId(height, seaLevel, temp, rain, desertStrength, slope, wet) {
   const shrubCut = steppeCut + 0.10;
 
   if (temp < 0.12 || alt > 0.86) return BIOME.SNOW;
+
+  // effective moisture: rain plus the mountain bonus
+  const t = clamp((rise || 0) / RISE_FULL, 0, 1);
+  const moist = rain + MOUNTAIN_WET * t * t * (3 - 2 * t);
+
   // high mountains: bare rock on steep or dry slopes, meadows elsewhere
   if (alt > 0.68 || (alt > 0.45 && slope > 0.03)) return BIOME.ROCK;
-  if (alt > 0.5) return rain < 0.3 ? BIOME.ROCK : BIOME.ALPINE;
+  if (alt > 0.5) return moist < 0.3 ? BIOME.ROCK : BIOME.ALPINE;
 
-  if (wet && temp > 0.25 && rain > 0.4) return BIOME.WETLAND;
+  if (wet && temp > 0.25 && rain > 0.3) return BIOME.WETLAND;
 
   if (temp < 0.2) return BIOME.TUNDRA;
-  if (temp < 0.34) return rain < 0.28 ? BIOME.TUNDRA : BIOME.TAIGA;
+  if (temp < 0.34) return moist < 0.28 ? BIOME.TUNDRA : BIOME.TAIGA;
 
   const hot = temp > 0.6;
-  if (rain < desertCut) return hot ? BIOME.HOT_DESERT : BIOME.COLD_DESERT;
-  if (rain < steppeCut) return hot ? BIOME.SAVANNA : BIOME.STEPPE;
-  if (rain < shrubCut) return temp > 0.45 ? BIOME.SHRUBLAND : BIOME.STEPPE;
+  if (moist < desertCut) return hot ? BIOME.HOT_DESERT : BIOME.COLD_DESERT;
+  if (moist < steppeCut) return hot ? BIOME.SAVANNA : BIOME.STEPPE;
+  if (moist < shrubCut) return temp > 0.45 ? BIOME.SHRUBLAND : BIOME.STEPPE;
   if (temp < 0.42) return BIOME.TAIGA;
-  if (rain < 0.68) return hot ? BIOME.SEASONAL_FOREST : BIOME.TEMPERATE_FOREST;
+  if (moist < 0.68) return hot ? BIOME.SEASONAL_FOREST : BIOME.TEMPERATE_FOREST;
   return hot ? BIOME.RAINFOREST : BIOME.WET_TEMPERATE;
 }
 
@@ -1760,15 +1774,28 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
 	
 	const biomeIds = new Int16Array(n * n);
 	const slopeScale = n / 768;
-	const wetFlow = Math.max(200, riverThreshold * 2);
+	// wetlands: along rivers on flat ground (was flow > 2x threshold and slope < 0.004,
+	// which almost never happened: 0.0% of land on 5 test seeds)
+	const wetFlow = Math.max(150, riverThreshold);
+	// a floodplain is a band a few px wide around the river (a 1 px strip was erased by
+	// the zone smoothing below)
+	const bigRiver = new Float32Array(n * n);
+	for (let i = 0; i < bigRiver.length; i++) if (h[i] > seaLevel && acc[i] > wetFlow) bigRiver[i] = 1;
+	const nearRiver = blurred(bigRiver, n, Math.max(2, Math.round(3 * slopeScale)));
+	// regional average height (sea counts as sea level) for the mountain moisture bonus
+	const hFloor = new Float32Array(n * n);
+	for (let i = 0; i < hFloor.length; i++) hFloor[i] = Math.max(h[i], seaLevel);
+	const hRegion = blurred(hFloor, n, Math.max(4, Math.round(32 * slopeScale)));
+	const landRange = 1 - seaLevel + 1e-9;
 	for (let y = 0; y < n; y++) {
 	  for (let x = 0; x < n; x++) {
 	    const i = idx(x, y, n);
 	    const xm = Math.max(0, x - 1), xp = Math.min(n - 1, x + 1);
 	    const ym = Math.max(0, y - 1), yp = Math.min(n - 1, y + 1);
 	    const slope = Math.hypot(h[idx(xp, y, n)] - h[idx(xm, y, n)], h[idx(x, yp, n)] - h[idx(x, ym, n)]) * 0.5 * slopeScale;
-	    const wet = acc[i] > wetFlow && slope < 0.004;
-	    biomeIds[i] = biomeId(h[i], seaLevel, temp[i], rain[i], desertStrength, slope, wet);
+	    const wet = nearRiver[i] > 0.05 && slope < 0.012;
+	    const rise = (h[i] - hRegion[i]) / landRange;
+	    biomeIds[i] = biomeId(h[i], seaLevel, temp[i], rain[i], desertStrength, slope, wet, rise);
 	  }
 	}
 	smoothBiomeIds(biomeIds, h, n, seaLevel, 2);
