@@ -477,31 +477,38 @@ footer.wrap.bottom{
   inset: 0;
   pointer-events: none;
   overflow: visible; /* осколки вылетают наружу */
+  perspective: 420px; /* осколки кувыркаются в 3D */
+  z-index: 3;
 }
 
+/* осколок: кусочек картинки витража (фон задаёт main.js), полёт и блеск — через JS */
 .window .shard{
   position: absolute;
-  width: var(--w, 14px);
-  height: var(--h, 18px);
-  clip-path: polygon(10% 0%, 100% 18%, 72% 100%, 0% 76%);
-  background: rgba(210, 220, 255, 0.22);
-  border: 1px solid rgba(255,255,255,0.22);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
-  transform: translate(0,0) rotate(var(--r0, 0deg));
-  animation: shard-fly 520ms cubic-bezier(.16, .82, .22, 1) forwards;
-  will-change: transform, opacity;
+  background-color: rgba(200, 215, 255, 0.35);
+  background-repeat: no-repeat;
+  backface-visibility: visible;
+  will-change: transform, opacity, filter;
 }
 
-@keyframes shard-fly{
-  0%{
-    transform: translate(0,0) rotate(var(--r0, 0deg)) scale(1);
-    opacity: 1;
-  }
-  70%{ opacity: 1; }
-  100%{
-    transform: translate(var(--dx, 0px), var(--dy, 0px)) rotate(var(--r1, 180deg)) scale(0.9);
-    opacity: 0;
-  }
+/* вспышка удара */
+.window .impact{
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,.95) 0 12%, rgba(220,230,255,.55) 30%, rgba(200,210,255,0) 70%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+/* искра: четырёхлучевая звёздочка */
+.window .sparkle{
+  position: absolute;
+  background: radial-gradient(circle, #fff 0 18%, rgba(255,246,214,.9) 30%, rgba(255,255,255,0) 62%);
+  clip-path: polygon(50% 0%, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0% 50%, 40% 40%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  will-change: transform, opacity;
 }
 
 
