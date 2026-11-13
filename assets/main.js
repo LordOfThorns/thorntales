@@ -24,6 +24,93 @@
   const rand = (a, b) => a + Math.random() * (b - a);
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
+  // ---------- Frame marks: tiny embossed curls and words in an unknown script ----------
+  //
+  // A few marks per window, placed at random spots of the frame band (the 12px between
+  // the outer edge and the glass): along the straight sides and the bottom (at the apex
+  // the band is too thin). Rusty gold with a pressed-in look (dark edge below, faint light above).
+  // Seeded by the window index, so they stay in the same places on every visit.
+  const FRAME = 12;                  // frame width in px, as .glass inset in style.css
+  const BOX_W = 250, BOX_H = 250 * 5 / 3;
+
+  // glyphs of the unknown script: rounded loops, hooks and waves in a 4 x 6 cell
+  const GLYPHS = [
+    "M0,5 C0,1 4,1 4,5",                       // arch
+    "M0,1 C0,5 4,5 4,1",                       // cup
+    "M0,3 C0,0 4,0 4,3 C4,6 0,6 0,3",          // loop
+    "M0,6 C0,2 2,0 3,1 C4,2 2,4 0,3",          // curl
+    "M0,3 C1,0 3,6 4,3",                       // wave
+    "M3,0 C0,0 0,3 2,3 C4,3 4,6 1,6",          // s
+    "M0,6 C1,3 1,1 3,0 C4.5,0 4,2 3,2",        // hook
+    "M1,0 C-0.5,2 -0.5,4 1,6 M3,1 C4.3,2.5 4.3,3.5 3,5", // ( )
+    "M0,4 C1,2 3,2 4,4 C3,6 1,6 0,4 M2,0.4 C2.4,0.4 2.4,1.2 2,1.2", // eye with a dot
+    "M0,2 C2,-1 4,2 2,3 C0,4 2,7 4,5",         // squiggle
+    "M0,5 C1,5 1,1 2,1 C3,1 3,5 4,5",          // hump
+    "M4,1 C1,0 0,2 2,3 C3.5,3.8 3,6 0.5,5.5",  // reversed s
+  ];
+  // scrolls and spirals, about 10 x 8, centred on 0,0
+  const CURLS = [
+    "M-5,2 C-5,-3 1,-4 2,0 C2.6,2.4 -1,3 -1.2,0.6 C-1.3,-0.8 0.4,-1 0.6,0",
+    "M-5,0 C-3,-4 2,4 5,0 M-5,0 C-6.4,-1 -6,1.6 -4.6,1.2 M5,0 C6.4,1 6,-1.6 4.6,-1.2",
+    "M0,4 C-4,2 -4,-4 0,-4 C4,-4 4,1.5 0.5,1.5 C-1.5,1.5 -1.5,-1.5 0.4,-1.5",
+    "M-5,3 C-1,3 -2,-4 1.5,-4 C4.5,-4 4.5,0 2,0 C0.8,0 0.8,-1.6 2,-1.6",
+    "M-5,0 C-4,-3 -1,-3 0,0 C1,3 4,3 5,0 C4,-2 2.5,-1 3.2,0.4",
+  ];
+
+  function frameMarks(index) {
+    let s = (index + 3) * 7919;
+    const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+    const STEP = 5.4; // glyph cell plus spacing
+    const word = () => {
+      // mostly middle length, now and then a long inscription
+      const n = 4 + Math.floor(Math.pow(rnd(), 1.4) * 13);
+      let d = "";
+      for (let i = 0; i < n; i++) {
+        const g = GLYPHS[Math.floor(rnd() * GLYPHS.length)];
+        // shift every glyph to its cell
+        d += g.replace(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g, (_, x, y) => `${(+x + i * STEP).toFixed(1)},${y}`) + " ";
+      }
+      const len = n * STEP - 1.4;
+      // a flourish under some words: a slow wave ending in a little curl
+      if (rnd() < 0.45) {
+        const a = len / 3, b = (2 * len) / 3;
+        d += `M-1,8 C${a.toFixed(1)},10 ${b.toFixed(1)},6 ${(len + 1).toFixed(1)},8 ` +
+             `C${(len + 3).toFixed(1)},9 ${(len + 3).toFixed(1)},6.4 ${(len + 1.4).toFixed(1)},6.8`;
+      }
+      return { d, len };
+    };
+
+    const marks = [];
+    const count = 3 + Math.floor(rnd() * 3);
+    const spots = ["left", "right", "bottom", "left", "right"];
+    for (let k = 0; k < count; k++) {
+      const spot = spots[Math.floor(rnd() * spots.length)];
+      const isCurl = rnd() < 0.3;
+      const m = isCurl
+        ? { d: CURLS[Math.floor(rnd() * CURLS.length)], len: 10, scale: 0.7 }
+        : { ...word(), scale: 0.6 };
+      const half = (m.len * m.scale) / 2;
+      let x, y, rot;
+      if (spot === "bottom") { x = BOX_W * (0.2 + rnd() * 0.6); y = BOX_H - FRAME / 2; rot = 0; }
+      else {
+        // the straight part of the sides, below the shoulders
+        x = spot === "left" ? FRAME / 2 : BOX_W - FRAME / 2;
+        const top = BOX_H * 0.36 + half, bottom = BOX_H - FRAME - half; // keep the whole mark on the side
+        y = top + rnd() * Math.max(0, bottom - top);
+        rot = isCurl ? 0 : (spot === "left" ? -90 : 90);
+      }
+      const tx = isCurl ? 0 : -half / m.scale, ty = isCurl ? 0 : -4; // centre a word on its spot
+      marks.push(`<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${rot}) scale(${m.scale}) translate(${tx.toFixed(1)} ${ty})"><path d="${m.d}"/></g>`);
+    }
+    const body = marks.join("");
+    return `
+      <svg class="frame-marks" viewBox="0 0 ${BOX_W} ${BOX_H.toFixed(2)}" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+        <g class="frame-marks__shade" transform="translate(.45 .55)">${body}</g>
+        <g class="frame-marks__light" transform="translate(-.35 -.4)">${body}</g>
+        <g class="frame-marks__gold">${body}</g>
+      </svg>`;
+  }
+
   // One overlay per window, placed over it in page coordinates
   function effectLayer(winEl) {
     let layer = winEl._shardLayer;
@@ -221,7 +308,8 @@
   });
 
   onReady(() => {
-    document.querySelectorAll(".window").forEach((w) => {
+    document.querySelectorAll(".window").forEach((w, i) => {
+      w.querySelector(".lead")?.insertAdjacentHTML("afterend", frameMarks(i));
       pictureOf(w); // preload the picture size for the shards
       const href = w.getAttribute("href");
       w.addEventListener("pointerenter", () => prefetch(href));

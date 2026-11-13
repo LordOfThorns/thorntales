@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200">
+<!-- Dark masonry of the Tower walls behind the home page windows (style.css .windows::before).
+     Seamless tile: stones that cross the left/right edge are drawn on both sides identically. -->
+<defs>
+  <filter id="n" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" stitchTiles="stitch"/>
+    <feColorMatrix values="0 0 0 0 .8  0 0 0 0 .8  0 0 0 0 .9  0 0 0 .09 0"/>
+  </filter>
+</defs>
+<rect width="300" height="200" fill="#06060a"/>
+<path d="M-3.8,0.8 L52.8,2.1 L51.4,36.2 L-5.1,37.9 Z" fill="#14141f"/>
+<path d="M54.6,2.0 L122.7,1.8 L120.9,37.5 L53.0,37.0 Z" fill="#181722"/>
+<path d="M123.0,0.3 L207.3,0.5 L206.5,37.1 L123.8,36.2 Z" fill="#181722"/>
+<path d="M209.9,1.8 L293.5,2.2 L293.9,35.7 L207.9,36.4 Z" fill="#12121b"/>
+<path d="M296.2,0.8 L352.8,2.1 L351.4,36.2 L294.9,37.9 Z" fill="#14141f"/>
+<path d="M-6.6,38.0 L57.8,39.5 L56.9,79.6 L-7.0,78.6 Z" fill="#14141f"/>
+<path d="M60.2,39.7 L145.2,38.5 L146.0,78.9 L59.6,79.4 Z" fill="#11111a"/>
+<path d="M148.9,39.9 L196.6,38.7 L196.9,78.5 L147.5,78.2 Z" fill="#1a1927"/>
+<path d="M197.7,37.9 L292.0,39.8 L291.5,78.2 L198.9,78.8 Z" fill="#171623"/>
+<path d="M293.4,38.0 L357.8,39.5 L356.9,79.6 L293.0,78.6 Z" fill="#14141f"/>
+<path d="M-1.6,80.1 L96.0,80.2 L97.8,114.7 L-0.9,113.9 Z" fill="#12121b"/>
+<path d="M99.6,82.3 L172.5,80.4 L173.3,114.8 L98.4,115.6 Z" fill="#15141e"/>
+<path d="M174.0,82.2 L255.0,81.9 L255.7,114.0 L175.6,115.0 Z" fill="#14141f"/>
+<path d="M258.8,80.8 L295.2,81.8 L296.2,114.2 L258.5,113.8 Z" fill="#14141f"/>
+<path d="M298.4,80.1 L396.0,80.2 L397.8,114.7 L299.1,113.9 Z" fill="#12121b"/>
+<path d="M-128.0,116.5 L7.0,118.3 L7.5,158.9 L-127.5,159.1 Z" fill="#14141f"/>
+<path d="M9.8,116.7 L68.8,117.5 L68.0,159.9 L9.5,158.6 Z" fill="#181722"/>
+<path d="M70.5,118.3 L170.7,116.3 L169.9,158.5 L71.4,158.9 Z" fill="#11111a"/>
+<path d="M172.0,116.5 L307.0,118.3 L307.5,158.9 L172.5,159.1 Z" fill="#14141f"/>
+<path d="M-25.8,160.6 L71.0,161.8 L69.0,199.9 L-26.1,198.4 Z" fill="#12121b"/>
+<path d="M71.9,162.0 L133.5,161.6 L133.1,197.9 L71.3,198.3 Z" fill="#171623"/>
+<path d="M135.5,160.1 L206.8,160.2 L208.9,198.5 L135.2,198.2 Z" fill="#12121b"/>
+<path d="M209.9,162.0 L271.6,162.2 L272.7,199.6 L209.2,200.0 Z" fill="#171623"/>
+<path d="M274.2,160.6 L371.0,161.8 L369.0,199.9 L273.9,198.4 Z" fill="#12121b"/>
+<g fill="none">
+<path d="M-3.8,1.4 L52.8,2.7" stroke="rgba(200,195,235,.07)"/>
+<path d="M-5.1,37.3 L51.4,35.6" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M54.6,2.6 L122.7,2.4" stroke="rgba(200,195,235,.07)"/>
+<path d="M53.0,36.4 L120.9,36.9" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M79.1,8.1 l4.3,3.5 l0.4,-0.7" stroke="rgba(0,0,0,.5)" stroke-width=".8"/>
+<path d="M123.0,0.9 L207.3,1.1" stroke="rgba(200,195,235,.07)"/>
+<path d="M123.8,35.6 L206.5,36.5" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M136.3,28.5 l2.2,6.5 l4.8,0.5" stroke="rgba(0,0,0,.5)" stroke-width=".8"/>
+<path d="M209.9,2.4 L293.5,2.8" stroke="rgba(200,195,235,.07)"/>
+<path d="M207.9,35.8 L293.9,35.1" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M296.2,1.4 L352.8,2.7" stroke="rgba(200,195,235,.07)"/>
+<path d="M294.9,37.3 L351.4,35.6" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M-6.6,38.6 L57.8,40.1" stroke="rgba(200,195,235,.07)"/>
+<path d="M-7.0,78.0 L56.9,79.0" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M60.2,40.3 L145.2,39.1" stroke="rgba(200,195,235,.07)"/>
+<path d="M59.6,78.8 L146.0,78.3" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M148.9,40.5 L196.6,39.3" stroke="rgba(200,195,235,.07)"/>
+<path d="M147.5,77.6 L196.9,77.9" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M197.7,38.5 L292.0,40.4" stroke="rgba(200,195,235,.07)"/>
+<path d="M198.9,78.2 L291.5,77.6" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M293.4,38.6 L357.8,40.1" stroke="rgba(200,195,235,.07)"/>
+<path d="M293.0,78.0 L356.9,79.0" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M-1.6,80.7 L96.0,80.8" stroke="rgba(200,195,235,.07)"/>
+<path d="M-0.9,113.3 L97.8,114.1" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M99.6,82.9 L172.5,81.0" stroke="rgba(200,195,235,.07)"/>
+<path d="M98.4,115.0 L173.3,114.2" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M174.0,82.8 L255.0,82.5" stroke="rgba(200,195,235,.07)"/>
+<path d="M175.6,114.4 L255.7,113.4" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M258.8,81.4 L295.2,82.4" stroke="rgba(200,195,235,.07)"/>
+<path d="M258.5,113.2 L296.2,113.6" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M298.4,80.7 L396.0,80.8" stroke="rgba(200,195,235,.07)"/>
+<path d="M299.1,113.3 L397.8,114.1" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M-128.0,117.1 L7.0,118.9" stroke="rgba(200,195,235,.07)"/>
+<path d="M-127.5,158.5 L7.5,158.3" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M9.8,117.3 L68.8,118.1" stroke="rgba(200,195,235,.07)"/>
+<path d="M9.5,158.0 L68.0,159.3" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M70.5,118.9 L170.7,116.9" stroke="rgba(200,195,235,.07)"/>
+<path d="M71.4,158.3 L169.9,157.9" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M172.0,117.1 L307.0,118.9" stroke="rgba(200,195,235,.07)"/>
+<path d="M172.5,158.5 L307.5,158.3" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M-25.8,161.2 L71.0,162.4" stroke="rgba(200,195,235,.07)"/>
+<path d="M-26.1,197.8 L69.0,199.3" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M71.9,162.6 L133.5,162.2" stroke="rgba(200,195,235,.07)"/>
+<path d="M71.3,197.7 L133.1,197.3" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M135.5,160.7 L206.8,160.8" stroke="rgba(200,195,235,.07)"/>
+<path d="M135.2,197.6 L208.9,197.9" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M209.9,162.6 L271.6,162.8" stroke="rgba(200,195,235,.07)"/>
+<path d="M209.2,199.4 L272.7,199.0" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+<path d="M274.2,161.2 L371.0,162.4" stroke="rgba(200,195,235,.07)"/>
+<path d="M273.9,197.8 L369.0,199.3" stroke="rgba(0,0,0,.55)" stroke-width="1.2"/>
+</g>
+<rect width="300" height="200" filter="url(#n)"/>
+</svg>
