@@ -1525,3 +1525,126 @@ textarea.input{
 }
 
 .map-tip__level{ color: var(--muted); }
+
+
+/* =====================================================
+   ТЕГИ СТИХОВ И РЕДАКТОР АВТОРА
+   ===================================================== */
+
+.poem__tags{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -4px 0 10px;
+}
+
+.poem-tag{
+  padding: 1px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(140,120,255,.28);
+  background: rgba(140,120,255,.10);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.poem-tag:hover,
+.poem-tag--active{
+  color: var(--ink);
+  border-color: rgba(160,140,255,.6);
+  background: rgba(140,120,255,.24);
+}
+
+.poem-filter{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.poem-admin{
+  margin: 0 0 14px;
+}
+
+.poem__edit-btn{
+  padding: 1px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.poem__edit-btn:hover{
+  color: var(--ink);
+  border-color: rgba(140,120,255,.5);
+}
+
+.poem__site-mark{
+  font-size: 12px;
+  color: rgba(190,170,255,.75);
+  font-style: italic;
+}
+
+.poem--editing{
+  border-color: rgba(140,120,255,.4);
+}
+
+.poem-edit{
+  display: grid;
+  gap: 12px;
+}
+
+.poem-edit__row{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px;
+  gap: 12px;
+}
+
+@media (max-width: 520px){
+  .poem-edit__row{ grid-template-columns: 1fr; }
+}
+
+.poem-edit__text{
+  font-size: 15px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.poem-edit__error{
+  margin: 0;
+  font-size: 14px;
+  color: #ff9b9b;
+}
+
+.poem-edit__actions{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.poem-edit__spacer{ flex: 1; }
+
+/* число стихов в углу карточки сборника */
+.poetry-card{ position: relative; }
+
+.poetry-card__count{
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .3px;
+}
+
+.poetry-card__count:empty{ display: none; }
+
+.poetry-card__count + .poetry-card__title{ padding-right: 28px; }

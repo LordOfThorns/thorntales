@@ -170,6 +170,47 @@ create policy "avatars list own" on storage.objects
 
 
 -- =========================================================
+-- Poem edits made on the site by the author (admin).
+-- One row = the whole poem as it should be shown now:
+--   poem_id found in data/poetry/<catalog>.txt -> replaces that poem;
+--   poem_id not in the file                    -> a new poem in that catalog.
+-- Deleting a row brings back the text from the file.
+-- =========================================================
+
+create table if not exists public.poem_edits (
+  catalog    text not null check (char_length(catalog) between 1 and 80),
+  poem_id    text not null check (char_length(poem_id) between 1 and 100),
+  title      text not null check (char_length(title) between 1 and 300),
+  date       text not null default '' check (char_length(date) <= 40),
+  body       text not null check (char_length(body) <= 50000),
+  tags       text[] not null default '{}' check (cardinality(tags) <= 30),
+  updated_at timestamptz not null default now(),
+  primary key (catalog, poem_id)
+);
+
+alter table public.poem_edits enable row level security;
+
+drop trigger if exists poem_edits_touch on public.poem_edits;
+create trigger poem_edits_touch
+  before update on public.poem_edits
+  for each row execute function public.touch_comment();
+
+drop policy if exists "poem edits are public" on public.poem_edits;
+create policy "poem edits are public" on public.poem_edits
+  for select using (true);
+
+drop policy if exists "admin writes poem edits" on public.poem_edits;
+create policy "admin writes poem edits" on public.poem_edits
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+revoke insert, update, delete on public.poem_edits from anon, authenticated;
+grant select on public.poem_edits to anon, authenticated;
+grant insert, update, delete on public.poem_edits to authenticated;
+
+
+-- =========================================================
 -- Make yourself admin (can delete any comment).
 -- Put your login email below and run just this statement.
 -- =========================================================
