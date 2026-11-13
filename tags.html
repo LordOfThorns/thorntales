@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title data-i18n="nav.tags">Теги · Thorntales</title>
+  <link rel="stylesheet" href="/assets/style.css?v=11" />
+</head>
+<body data-page="tags">
+  <main class="wrap">
+    <header class="top">
+      <h1 data-i18n="tags.title">Теги</h1>
+      <p class="sub" id="tagsSub" data-i18n="account.loading">Загрузка…</p>
+    </header>
+
+    <div class="tags-page" id="tagsPage" hidden>
+      <p class="tags-note" data-i18n="tags.note">Скрытие надёжно для стихов, добавленных на сайте. Стихи из файлов сборников на страницах скрываются, но сам файл открыт на GitHub, такие стихи помечены «есть в файле».</p>
+
+      <form class="tags-add" id="tagAdd">
+        <input class="input" name="tag" maxlength="40" data-i18n-attr="placeholder:tags.newPlaceholder" placeholder="новый тег">
+        <button class="btn" type="submit" data-i18n="tags.add">Добавить</button>
+      </form>
+
+      <div id="tagList"></div>
+    </div>
+
+    <footer class="bottom">
+      <small>© 2026</small>
+    </footer>
+  </main>
+
+  <script src="/assets/i18n.js?v=8"></script>
+  <script src="/assets/layout.js?v=3"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  <script src="/assets/auth.js"></script>
+  <script src="/assets/poetry-data.js"></script>
+  <script src="/assets/tags.js"></script>
+</body>
+</html>

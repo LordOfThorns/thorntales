@@ -211,6 +211,157 @@ grant insert, update, delete on public.poem_edits to authenticated;
 
 
 -- =========================================================
+-- Collection edits made on the site by the admin: name, description, small picture.
+-- A row overrides the entry with the same id in data/poetry/catalogs.json.
+-- =========================================================
+
+create table if not exists public.catalog_edits (
+  catalog    text primary key check (char_length(catalog) between 1 and 80),
+  label      text not null check (char_length(label) between 1 and 200),
+  descr      text not null default '' check (char_length(descr) <= 4000),
+  image_url  text check (image_url is null or char_length(image_url) <= 500),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.catalog_edits enable row level security;
+
+drop trigger if exists catalog_edits_touch on public.catalog_edits;
+create trigger catalog_edits_touch
+  before update on public.catalog_edits
+  for each row execute function public.touch_comment();
+
+drop policy if exists "catalog edits are public" on public.catalog_edits;
+create policy "catalog edits are public" on public.catalog_edits
+  for select using (true);
+
+drop policy if exists "admin writes catalog edits" on public.catalog_edits;
+create policy "admin writes catalog edits" on public.catalog_edits
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+revoke insert, update, delete on public.catalog_edits from anon, authenticated;
+grant select on public.catalog_edits to anon, authenticated;
+grant insert, update, delete on public.catalog_edits to authenticated;
+
+-- Pictures of collections: public bucket, only the admin uploads
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('catalog-images', 'catalog-images', true, 1048576, array['image/jpeg', 'image/png', 'image/webp'])
+on conflict (id) do update
+  set public = excluded.public,
+      file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "catalog images admin insert" on storage.objects;
+create policy "catalog images admin insert" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'catalog-images' and public.is_admin());
+
+drop policy if exists "catalog images admin update" on storage.objects;
+create policy "catalog images admin update" on storage.objects
+  for update to authenticated
+  using (bucket_id = 'catalog-images' and public.is_admin());
+
+drop policy if exists "catalog images admin delete" on storage.objects;
+create policy "catalog images admin delete" on storage.objects
+  for delete to authenticated
+  using (bucket_id = 'catalog-images' and public.is_admin());
+
+drop policy if exists "catalog images admin list" on storage.objects;
+create policy "catalog images admin list" on storage.objects
+  for select to authenticated
+  using (bucket_id = 'catalog-images' and public.is_admin());
+
+
+-- =========================================================
+-- Who sees poems with a tag.
+--   no row / mode 'public' -> everyone
+--   mode 'signed_in'       -> everyone who is logged in
+--   mode 'listed'          -> only users in tag_readers (empty list = only the admin)
+-- The admin sees everything. A poem with several restricted tags is shown only
+-- if every one of them lets the reader in.
+-- NOTE: this protects poems stored in poem_edits. A poem that is also in a txt file
+-- is only hidden on the pages: the file itself is public on GitHub.
+-- =========================================================
+
+create table if not exists public.tag_access (
+  tag        text primary key check (char_length(tag) between 1 and 40),
+  mode       text not null default 'public' check (mode in ('public', 'signed_in', 'listed')),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.tag_readers (
+  tag     text not null references public.tag_access (tag) on delete cascade on update cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  primary key (tag, user_id)
+);
+
+alter table public.tag_access enable row level security;
+alter table public.tag_readers enable row level security;
+
+drop trigger if exists tag_access_touch on public.tag_access;
+create trigger tag_access_touch
+  before update on public.tag_access
+  for each row execute function public.touch_comment();
+
+drop policy if exists "admin manages tag access" on public.tag_access;
+create policy "admin manages tag access" on public.tag_access
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+drop policy if exists "admin manages tag readers" on public.tag_readers;
+create policy "admin manages tag readers" on public.tag_readers
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+revoke all on public.tag_access, public.tag_readers from anon, authenticated;
+grant select, insert, update, delete on public.tag_access, public.tag_readers to authenticated;
+
+-- Can the current reader see a poem with these tags?
+create or replace function public.can_see_tags(tags text[])
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select public.is_admin() or not exists (
+    select 1
+    from public.tag_access a
+    where a.tag = any (tags)
+      and a.mode <> 'public'
+      and not (a.mode = 'signed_in' and auth.uid() is not null)
+      and not (a.mode = 'listed' and exists (
+        select 1 from public.tag_readers r where r.tag = a.tag and r.user_id = auth.uid()))
+  );
+$$;
+
+-- Poems the current reader must not see (so the pages also hide their txt versions)
+create or replace function public.hidden_poems()
+returns table (catalog text, poem_id text)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select e.catalog, e.poem_id
+  from public.poem_edits e
+  where not public.can_see_tags(e.tags);
+$$;
+
+grant execute on function public.can_see_tags(text[]) to anon, authenticated;
+grant execute on function public.hidden_poems() to anon, authenticated;
+
+-- Restricted poems are not readable at all for those who may not see them
+drop policy if exists "poem edits are public" on public.poem_edits;
+drop policy if exists "poem edits by tag access" on public.poem_edits;
+create policy "poem edits by tag access" on public.poem_edits
+  for select using (public.can_see_tags(tags));
+
+
+-- =========================================================
 -- Make yourself admin (can delete any comment).
 -- Put your login email below and run just this statement.
 -- =========================================================

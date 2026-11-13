@@ -24,6 +24,7 @@
     mapGen:     { label: 'Генератор карт', href: '/terrain.html',     parent: 'projects' },
     login:      { label: 'Вход',           href: '/login.html',       parent: 'home' },
     account:    { label: 'Кабинет',        href: '/account.html',     parent: 'home' },
+    tags:       { label: 'Теги',           href: '/tags.html',        parent: 'poetry' },
   };
 
   const pageId = document.body.dataset.page || '';

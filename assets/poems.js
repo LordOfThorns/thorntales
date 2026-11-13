@@ -20,7 +20,6 @@
 
   const cat = new URLSearchParams(location.search).get('cat') || 'lyrical';
   const dataDir = './data/poetry/';
-  const catalogsUrl = dataDir + 'catalogs.json';
   const db = window.Auth ? Auth.client : null;
 
   // Page state
@@ -32,30 +31,31 @@
   let editing = null;          // poem id being edited, '' = new poem form, null = none
   let activeTag = '';
   let showUntranslatedMark = false;
+  let restricted = new Map();  // admin only: tag -> access mode, for tags that are not public
+  let catInfo = null;
+  let catalogs = [];
+  let catIndex = -1;
+  let editingCatalog = false;
+  const catalogAdmin = document.createElement('div');
+  catalogAdmin.className = 'catalog-admin';
+  pageSub.after(catalogAdmin);
 
   try {
-    const [raw, catsJson, editRows] = await Promise.all([
+    const [raw, cats, editRows, hidden] = await Promise.all([
       fetchText(`${dataDir}${encodeURIComponent(cat)}.txt`, true),
-      fetch(catalogsUrl, { cache: 'no-store' }).then(r => {
-        if (!r.ok) throw new Error(`${catalogsUrl}: ${r.status}`);
-        return r.json();
-      }),
+      PoetryData.catalogs(),
       loadEdits(),
+      PoetryData.hiddenPoems(),
     ]);
 
-    const catalogs = catsJson.catalogs || [];
-    const catIndex = catalogs.findIndex(x => x.id === cat);
-    const catInfo = catalogs[catIndex];
+    catalogs = cats;
+    catIndex = catalogs.findIndex(x => x.id === cat);
+    catInfo = catalogs[catIndex] || null;
+    renderHeader();
 
-    // Title and subtitle of the catalog (subtitle may contain <br> only)
-    const pageLabel = field(catInfo, 'label') || humanizeCat(cat);
-    pageTitle.textContent = pageLabel;
-    document.title = `${pageLabel} · Thorntales`;
-    if (window.Layout) Layout.setCrumbs([{ label: pageLabel }]);
-    const desc = field(catInfo, 'desc');
-    pageSub.innerHTML = desc ? allowOnlyBr(desc) : '';
-
-    filePoems = parsePoemsTxt(raw);
+    // Poems hidden from this reader by tag access are dropped from the file too
+    const hiddenIds = hidden.get(cat) || new Set();
+    filePoems = parsePoemsTxt(raw).filter(p => !hiddenIds.has(p.id));
     for (const row of editRows) edits.set(row.poem_id, row);
 
     // Translation for the reader's language, if this catalog is written in another one
@@ -74,7 +74,7 @@
     showUntranslatedMark = lang !== sourceLang;
 
     render();
-    renderPager(catalogs, catIndex);
+    renderPager();
 
     // Content is loaded after the browser tried to jump to #hash, so jump again
     if (location.hash) {
@@ -84,11 +84,13 @@
 
     // Show the editor once we know the reader is the admin (and hide it after sign-out)
     if (window.Auth) {
-      Auth.onChange(({ profile }) => {
+      Auth.onChange(async ({ profile }) => {
         const admin = !!profile?.is_admin;
         if (admin === isAdmin) return;
         isAdmin = admin;
-        if (!admin) editing = null;
+        if (!admin) { editing = null; editingCatalog = false; }
+        restricted = admin ? await PoetryData.restrictedTags() : new Map();
+        renderHeader();
         render();
       });
     }
@@ -157,6 +159,131 @@
   }
 
   // ---------- Rendering ----------
+
+  // Collection title, description and (for the admin) its editor
+  function renderHeader() {
+    const pageLabel = field(catInfo, 'label') || humanizeCat(cat);
+    pageTitle.textContent = pageLabel;
+    document.title = `${pageLabel} · Thorntales`;
+    if (window.Layout) Layout.setCrumbs([{ label: pageLabel }]);
+    const desc = field(catInfo, 'desc');
+    pageSub.innerHTML = desc ? allowOnlyBr(desc) : '';
+    pageSub.hidden = editingCatalog;
+    pageTitle.hidden = editingCatalog;
+
+    if (!isAdmin || !catInfo) {
+      catalogAdmin.innerHTML = '';
+      return;
+    }
+    if (!editingCatalog) {
+      catalogAdmin.innerHTML = `
+        <button class="poem__edit-btn" type="button" data-cat-act="edit">${escapeHtml(t('catalog.edit'))}</button>
+        <a class="poem__edit-btn" href="/tags.html">${escapeHtml(t('catalog.tags'))}</a>`;
+      return;
+    }
+    const img = catInfo.image || '';
+    catalogAdmin.innerHTML = `
+      <form class="panel poem-edit catalog-edit">
+        <div class="catalog-edit__top">
+          <div class="catalog-edit__img">
+            ${img ? `<img src="${escapeHtml(img)}" alt="">` : `<span>${escapeHtml(t('catalog.noImage'))}</span>`}
+          </div>
+          <div class="catalog-edit__img-actions">
+            <label class="btn">
+              <span>${escapeHtml(t('catalog.uploadImage'))}</span>
+              <input type="file" name="image" accept="image/jpeg,image/png,image/webp" hidden>
+            </label>
+            ${img ? `<button class="btn btn--ghost" type="button" data-cat-act="remove-image">${escapeHtml(t('catalog.removeImage'))}</button>` : ''}
+            <p class="field__hint">${escapeHtml(t('catalog.imageHint'))}</p>
+          </div>
+        </div>
+        <label class="field">
+          <span class="field__label">${escapeHtml(t('catalog.fieldLabel'))}</span>
+          <input class="input" name="label" maxlength="200" value="${escapeHtml(catInfo.label || '')}">
+        </label>
+        <label class="field">
+          <span class="field__label">${escapeHtml(t('catalog.fieldDesc'))}</span>
+          <textarea class="input" name="descr" rows="5">${escapeHtml(PoetryData.descToText(catInfo.desc))}</textarea>
+        </label>
+        <p class="poem-edit__error" hidden></p>
+        <div class="poem-edit__actions">
+          <button class="btn btn--primary" type="submit">${escapeHtml(t('poems.save'))}</button>
+          <button class="btn btn--ghost" type="button" data-cat-act="cancel">${escapeHtml(t('poems.cancel'))}</button>
+          ${catInfo.edited ? `<span class="poem-edit__spacer"></span>
+            <button class="btn btn--ghost" type="button" data-cat-act="revert">${escapeHtml(t('poems.revert'))}</button>` : ''}
+        </div>
+      </form>`;
+  }
+
+  // Picture chosen in the form but not saved yet
+  let pendingImage = null; // File, or '' = remove the picture
+
+  catalogAdmin.addEventListener('change', (e) => {
+    if (e.target.name !== 'image' || !e.target.files[0]) return;
+    pendingImage = e.target.files[0];
+    const box = catalogAdmin.querySelector('.catalog-edit__img');
+    box.innerHTML = `<img src="${URL.createObjectURL(pendingImage)}" alt="">`;
+  });
+
+  catalogAdmin.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-cat-act]');
+    if (!btn) return;
+    const act = btn.dataset.catAct;
+    if (act === 'edit') {
+      editingCatalog = true;
+      pendingImage = null;
+      renderHeader();
+      catalogAdmin.querySelector('input[name="label"]').focus();
+    } else if (act === 'cancel') {
+      editingCatalog = false;
+      renderHeader();
+    } else if (act === 'remove-image') {
+      pendingImage = '';
+      catalogAdmin.querySelector('.catalog-edit__img').innerHTML = `<span>${escapeHtml(t('catalog.noImage'))}</span>`;
+      btn.remove();
+    } else if (act === 'revert') {
+      if (!confirm(t('catalog.revertConfirm'))) return;
+      const form = btn.closest('form');
+      setBusy(form, true);
+      const { error } = await db.from('catalog_edits').delete().eq('catalog', cat);
+      if (error) return showError(form, t('poems.saveFailed') + error.message);
+      await PoetryData.removeCatalogImages(cat).catch(() => {});
+      await reloadCatalog();
+    }
+  });
+
+  catalogAdmin.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const f = form.elements;
+    const label = f.label.value.trim();
+    const descr = f.descr.value.replace(/\r\n/g, '\n').trim();
+    if (!label) return showError(form, t('poems.needTitle'));
+
+    setBusy(form, true);
+    try {
+      let image_url = catInfo.image || null;
+      if (pendingImage) image_url = await PoetryData.uploadCatalogImage(cat, pendingImage);
+      else if (pendingImage === '') {
+        image_url = null;
+        await PoetryData.removeCatalogImages(cat);
+      }
+      const { error } = await db.from('catalog_edits').upsert({ catalog: cat, label, descr, image_url });
+      if (error) throw error;
+    } catch (err) {
+      return showError(form, t('poems.saveFailed') + (err.message || err));
+    }
+    await reloadCatalog();
+  });
+
+  async function reloadCatalog() {
+    catalogs = await PoetryData.catalogs();
+    catInfo = catalogs[catIndex] || catalogs.find(x => x.id === cat) || null;
+    editingCatalog = false;
+    pendingImage = null;
+    renderHeader();
+    renderPager();
+  }
 
   function render() {
     poems = buildPoems();
@@ -227,9 +354,13 @@
     }
 
     const tags = p.tags.length
-      ? `<div class="poem__tags">${p.tags.map(tag =>
-          `<button class="poem-tag${tag === activeTag ? ' poem-tag--active' : ''}" type="button" data-act="tag" data-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`
-        ).join('')}</div>`
+      ? `<div class="poem__tags">${p.tags.map(tag => {
+          // The admin sees which tags hide the poem from others
+          const mode = restricted.get(tag);
+          const cls = (tag === activeTag ? ' poem-tag--active' : '') + (mode ? ' poem-tag--restricted' : '');
+          const title = mode ? ` title="${escapeHtml(t('tags.mode.' + mode))}"` : '';
+          return `<button class="poem-tag${cls}" type="button" data-act="tag" data-tag="${escapeHtml(tag)}"${title}>#${escapeHtml(tag)}</button>`;
+        }).join('')}</div>`
       : '';
 
     return `
@@ -410,7 +541,8 @@
     });
   }
 
-  function renderPager(catalogs, i){
+  function renderPager(){
+    const i = catIndex;
     const pager = document.getElementById('pager');
     if (!pager || i < 0) return;
     const prev = catalogs[i - 1];

@@ -1683,3 +1683,167 @@ textarea.input{
 .poetry-card__count:empty{ display: none; }
 
 .poetry-card__count + .poetry-card__title{ padding-right: 28px; }
+
+
+/* =====================================================
+   КАРТИНКА СБОРНИКА, РЕДАКТОР СБОРНИКА, СТРАНИЦА ТЕГОВ
+   ===================================================== */
+
+/* small picture under all the texts of the card, in its own proportions */
+.poetry-card__img{
+  display: block;
+  margin-top: 12px;
+  max-width: 120px;
+  max-height: 64px;
+  width: auto;
+  height: auto;
+  border-radius: 6px;
+}
+
+.catalog-admin{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+
+.catalog-admin .poem__edit-btn{ text-decoration: none; }
+
+.catalog-edit{
+  width: 100%;
+  max-width: 640px;
+}
+
+.catalog-edit__top{
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.catalog-edit__img{
+  flex: none;
+  width: 84px;
+  height: 84px;
+  border-radius: 16px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(255,255,255,.2);
+  font-size: 12px;
+  color: var(--faint);
+  text-align: center;
+}
+
+.catalog-edit__img img{
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.catalog-edit__img-actions{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.catalog-edit__img-actions .field__hint{ flex-basis: 100%; }
+
+.poem-tag--restricted{
+  border-style: dashed;
+  color: rgba(255, 190, 170, .85);
+  border-color: rgba(255, 170, 150, .45);
+  background: rgba(255, 140, 120, .08);
+}
+
+.tags-page{
+  display: grid;
+  gap: 16px;
+  max-width: 720px;
+}
+
+.tags-page[hidden]{ display: none; }
+
+.tags-note{
+  margin: 0;
+  font-size: 14px;
+  color: var(--faint);
+}
+
+.tags-add{
+  display: flex;
+  gap: 10px;
+  max-width: 420px;
+}
+
+#tagList{
+  display: grid;
+  gap: 14px;
+}
+
+.tag-card{ display: grid; gap: 12px; }
+
+.tag-card--restricted{ border-color: rgba(255, 170, 150, .3); }
+
+.tag-card__name{
+  margin: 0;
+  font-size: 18px;
+}
+
+.tag-modes{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.tag-mode,
+.tag-reader{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.tag-readers{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.04);
+}
+
+.tag-readers .field__hint{ flex-basis: 100%; }
+
+.tag-reader__avatar{
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+
+.tag-poems summary{
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.tag-poems ul{
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 14px;
+}
+
+.tag-poems a{ color: var(--ink); }
+
+.tag-poems__cat{
+  margin-left: 6px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.tag-poems__file{
+  margin-left: 6px;
+  font-size: 12px;
+  color: rgba(255, 190, 170, .85);
+}
