@@ -140,6 +140,12 @@
       "href": "./poems.html?cat=star-wars"
     },
     {
+      "id": "book-poems",
+      "label": "Стихи по книге",
+      "desc": "Здесь располагается поэзия по всему книжному циклу.",
+      "href": "./poems.html?cat=book-poems"
+    },
+    {
       "id": "commissioned",
       "label": "Заказное",
       "desc": "Стихи, написанные на заказ, не близкие мне.",
