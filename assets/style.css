@@ -110,11 +110,46 @@ footer.wrap.bottom{
 }
 
 .site-nav__brand{
+  position: relative;
+  isolation: isolate;
   font-weight: 750;
   letter-spacing: .6px;
   text-decoration: none;
   white-space: nowrap;
 }
+
+.site-nav__brand-text{
+  position: relative;
+  z-index: 1;
+}
+
+/* бледные ветки терна вокруг надписи (рисует layout.js) */
+.brand-thorns{
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 132px;
+  height: 40px;
+  margin: -20px 0 0 -66px;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.brand-thorns--back{ z-index: 0; opacity: .5; }
+.brand-thorns--front{ z-index: 2; opacity: .62; }
+
+.brand-thorns__stem{
+  fill: none;
+  stroke: rgba(205, 195, 245, .85);
+  stroke-width: .9;
+  stroke-linecap: round;
+}
+
+.brand-thorns__thorn{
+  fill: rgba(205, 195, 245, .85);
+}
+
+.site-nav__brand:hover .brand-thorns--back{ opacity: .7; }
 
 .site-nav__menu{
   flex: 1;

@@ -68,7 +68,7 @@
     nav.className = 'site-nav' + (pageId === 'home' ? ' site-nav--home' : '');
     nav.innerHTML = `
       <div class="site-nav__inner">
-        <a class="site-nav__brand" href="${SITE.home.href}">Thorntales</a>
+        <a class="site-nav__brand" href="${SITE.home.href}"><span class="site-nav__brand-text">Thorntales</span></a>
         <nav class="site-nav__menu" id="site-nav-menu" aria-label="${escapeHtml(t('nav.mainMenu', 'Основное меню'))}">
           <ul>${items}</ul>
           <div class="site-nav__user" id="site-nav-user"></div>
@@ -80,6 +80,7 @@
       </div>`;
 
     document.body.prepend(nav);
+    addThorns(nav.querySelector('.site-nav__brand'));
 
     nav.querySelectorAll('.lang-switch [data-lang]').forEach((b) => {
       b.addEventListener('click', () => I18n.setLang(b.dataset.lang));
@@ -100,6 +101,92 @@
     function closeMenu() {
       nav.classList.remove('is-open');
       toggle.setAttribute('aria-expanded', 'false');
+    }
+  }
+
+  // ---------- Thorn branches around the logo ----------
+
+  // Two thin stems wind around "Thorntales": the back layer lies under the letters,
+  // the front layer repeats the stems clipped to a few short pieces, so the branches
+  // look like they pass in front of the word there. Thorns are placed along the
+  // stems with getPointAtLength, so the paths must be in the DOM first.
+  function addThorns(brand) {
+    if (!brand) return;
+    const NS = 'http://www.w3.org/2000/svg';
+    const W = 132, H = 40;
+    const stems = [
+      'M3,30 C22,38 34,6 58,13 S92,34 129,9',
+      'M6,11 C26,2 44,34 68,27 S104,6 127,31',
+    ];
+    const frontPieces = [[30, 13], [61, 9], [93, 12]]; // [x, width] in viewBox units
+
+    const back = document.createElementNS(NS, 'svg');
+    back.setAttribute('class', 'brand-thorns brand-thorns--back');
+    back.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    back.setAttribute('aria-hidden', 'true');
+    back.setAttribute('focusable', 'false');
+    const g = document.createElementNS(NS, 'g');
+    g.id = 'brand-thorns-branch';
+    back.appendChild(g);
+    brand.prepend(back);
+
+    for (const d of stems) {
+      const stem = document.createElementNS(NS, 'path');
+      stem.setAttribute('d', d);
+      stem.setAttribute('class', 'brand-thorns__stem');
+      g.appendChild(stem);
+      g.appendChild(thornsAlong(stem));
+    }
+
+    const front = document.createElementNS(NS, 'svg');
+    front.setAttribute('class', 'brand-thorns brand-thorns--front');
+    front.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    front.setAttribute('aria-hidden', 'true');
+    front.setAttribute('focusable', 'false');
+    front.innerHTML = `
+      <clipPath id="brand-thorns-front-clip">
+        ${frontPieces.map(([x, w]) => `<rect x="${x}" y="0" width="${w}" height="${H}"/>`).join('')}
+      </clipPath>
+      <use href="#brand-thorns-branch" clip-path="url(#brand-thorns-front-clip)"/>`;
+    brand.appendChild(front);
+
+    function thornsAlong(stem) {
+      const out = document.createElementNS(NS, 'path');
+      out.setAttribute('class', 'brand-thorns__thorn');
+      const len = stem.getTotalLength();
+      if (!len) return out; // not rendered (e.g. display:none), skip thorns
+      // Fixed pseudo-random sequence: uneven like a real branch, but the same on every page
+      let seed = Math.round(len * 7);
+      const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+      const thorn = (x, y, tx, ty, nx, ny, h, b, lean) => {
+        const tipX = x + nx * h + tx * h * lean, tipY = y + ny * h + ty * h * lean;
+        return `M${(x - tx * b).toFixed(2)},${(y - ty * b).toFixed(2)}` +
+               `L${tipX.toFixed(2)},${tipY.toFixed(2)}` +
+               `L${(x + tx * b).toFixed(2)},${(y + ty * b).toFixed(2)}Z`;
+      };
+      let d = '';
+      let side = rnd() < 0.5 ? 1 : -1;
+      for (let s = 4 + rnd() * 6; s < len - 4; s += 6 + rnd() * 8) {
+        const p = stem.getPointAtLength(s);
+        const q = stem.getPointAtLength(s + 0.6);
+        let tx = q.x - p.x, ty = q.y - p.y;
+        const tl = Math.hypot(tx, ty) || 1;
+        tx /= tl; ty /= tl;
+        const nx = -ty * side, ny = tx * side;
+        if (rnd() < 0.16) {
+          // A short side twig ending in a sharp point, with a thorn of its own
+          const h = 6 + rnd() * 3;
+          d += thorn(p.x, p.y, tx, ty, nx, ny, h, 0.7, 0.8);
+          const mx = p.x + (nx + tx * 0.8) * h * 0.5, my = p.y + (ny + ty * 0.8) * h * 0.5;
+          d += thorn(mx, my, nx, ny, -tx, -ty, 2, 0.5, 0.7);
+        } else {
+          // thorns lean toward the tip of the stem
+          d += thorn(p.x, p.y, tx, ty, nx, ny, 2.2 + rnd() * 1.8, 0.8 + rnd() * 0.3, 0.4 + rnd() * 0.4);
+        }
+        if (rnd() < 0.8) side = -side;
+      }
+      out.setAttribute('d', d);
+      return out;
     }
   }
 
