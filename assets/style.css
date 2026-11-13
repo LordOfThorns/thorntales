@@ -1929,3 +1929,113 @@ textarea.input{
 .frame-marks__shade{ stroke: rgba(0, 0, 0, .85); stroke-width: 1.2; }
 .frame-marks__light{ stroke: rgba(255, 226, 170, .07); stroke-width: .9; }
 .frame-marks__gold { stroke: rgba(160, 116, 64, .24); stroke-width: .85; }
+
+
+/* =====================================================
+   ТЕКСТЫ: стол со стопками книг (рисует texts.js)
+   ===================================================== */
+
+.desk{
+  position: relative;
+  margin: 30px auto 10px;
+  max-width: 1100px;
+  min-height: 300px;
+}
+
+/* столешница: тёмное дерево с волокнами, передняя кромка */
+.desk__top{
+  position: absolute;
+  left: -2%;
+  right: -2%;
+  bottom: 0;
+  border-radius: 4px 4px 2px 2px;
+  background:
+    linear-gradient(180deg, rgba(255,230,190,.10) 0, rgba(255,230,190,0) 4px),
+    repeating-linear-gradient(178deg, rgba(0,0,0,0) 0 7px, rgba(0,0,0,.18) 7px 8px, rgba(0,0,0,0) 8px 15px),
+    linear-gradient(180deg, #2a1b13 0, #1e130d 30%, #140c08 100%);
+  box-shadow: 0 18px 40px rgba(0,0,0,.6);
+}
+
+/* книга корешком к зрителю: старая, с чердака или из подвала.
+   Пятна и потёртости — шумовые SVG-текстуры (у каждой книги свой сдвиг, --bx/--by),
+   выцветание (--sat, --br) и неровные стёртые углы (--rad) задаёт texts.js. */
+.book{
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 30px;
+  border-radius: var(--rad, 5px);
+  text-decoration: none;
+  background:
+    /* потёртости и пятна */
+    url('img/book-scuffs.svg') var(--bx, 0) var(--by, 0) / 240px 120px repeat,
+    url('img/book-stains.svg') var(--by, 0) var(--bx, 0) / 220px 160px repeat,
+    /* стёртые края корешка: к торцам светлее и пыльнее */
+    linear-gradient(90deg, rgba(210,190,160,.16) 0, rgba(210,190,160,0) 5%, rgba(210,190,160,0) 95%, rgba(210,190,160,.14) 100%),
+    /* рёбра переплёта и тусклые золотые полоски у торцов */
+    linear-gradient(90deg,
+      transparent 0 12px, rgba(0,0,0,.35) 12px 14px, rgba(176,140,82,.38) 14px 16px, rgba(255,235,200,.08) 16px 17px,
+      transparent 17px 21px, rgba(176,140,82,.22) 21px 22px, transparent 22px),
+    linear-gradient(270deg,
+      transparent 0 12px, rgba(0,0,0,.35) 12px 14px, rgba(176,140,82,.38) 14px 16px, rgba(255,235,200,.08) 16px 17px,
+      transparent 17px 21px, rgba(176,140,82,.22) 21px 22px, transparent 22px),
+    /* плоский корешок: пыльная верхняя кромка, тёмная нижняя, середина ровная */
+    linear-gradient(180deg, rgba(190,180,160,.2) 0, rgba(190,180,160,.06) 3px, rgba(0,0,0,0) 4px, rgba(0,0,0,.06) 50%, rgba(0,0,0,0) calc(100% - 5px), rgba(0,0,0,.45) calc(100% - 2px), rgba(0,0,0,.6) 100%),
+    var(--c);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.04) inset,
+    0 -1px 0 rgba(0,0,0,.4) inset,
+    0 5px 12px rgba(0,0,0,.5);
+  filter: saturate(var(--sat, .75)) brightness(var(--br, .9));
+  transform: rotate(var(--r)) translateX(var(--px, 0px));
+  transition: transform 260ms cubic-bezier(.2,.8,.3,1), opacity 260ms ease, filter 260ms ease;
+}
+
+/* у некоторых безымянных книг ещё два ребра посередине */
+.book--plain-band{
+  background:
+    url('img/book-scuffs.svg') var(--bx, 0) var(--by, 0) / 240px 120px repeat,
+    url('img/book-stains.svg') var(--by, 0) var(--bx, 0) / 220px 160px repeat,
+    linear-gradient(90deg, rgba(210,190,160,.16) 0, rgba(210,190,160,0) 5%, rgba(210,190,160,0) 95%, rgba(210,190,160,.14) 100%),
+    linear-gradient(90deg,
+      transparent 0 38%, rgba(0,0,0,.3) 38% 39%, rgba(176,140,82,.2) 39% 40%, transparent 40% 60%,
+      rgba(0,0,0,.3) 60% 61%, rgba(176,140,82,.2) 61% 62%, transparent 62%),
+    linear-gradient(180deg, rgba(190,180,160,.2) 0, rgba(190,180,160,.06) 3px, rgba(0,0,0,0) 4px, rgba(0,0,0,.06) 50%, rgba(0,0,0,0) calc(100% - 5px), rgba(0,0,0,.45) calc(100% - 2px), rgba(0,0,0,.6) 100%),
+    var(--c);
+}
+
+/* название: тусклое тиснёное золото, местами стёртое */
+.book__title{
+  font-size: var(--title, 13px);
+  font-weight: 600;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: rgba(206, 178, 118, .82);
+  text-shadow: 0 -1px 0 rgba(0,0,0,.85), 0 1px 0 rgba(255,230,180,.06);
+  -webkit-mask-image: url('img/book-wear-mask.svg');
+          mask-image: url('img/book-wear-mask.svg');
+  -webkit-mask-size: 120px 60px;
+          mask-size: 120px 60px;
+  -webkit-mask-position: var(--bx, 0) var(--by, 0);
+          mask-position: var(--bx, 0) var(--by, 0);
+}
+
+/* вытащить книгу из стопки: она сдвигается вдоль себя и светлеет */
+.book--section{ cursor: pointer; }
+.book--section:hover,
+.book--section:focus-visible{
+  --px: 22px;
+  filter: saturate(calc(var(--sat, .75) + .15)) brightness(calc(var(--br, .9) + .22));
+  outline: none;
+}
+.book--section:focus-visible .book__title{ text-decoration: underline; text-underline-offset: 3px; }
+
+.texts-back{ margin: 18px 0 0; }
+.texts-back a{ color: var(--muted); }
+.texts-back a:hover{ color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce){
+  .book{ transition: none; }
+}

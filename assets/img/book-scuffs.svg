@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120" viewBox="0 0 240 120">
+<!-- Pale scuffs and rubbed streaks along old book spines (texts.html). -->
+<filter id="n" x="0" y="0" width="100%" height="100%">
+  <feTurbulence type="fractalNoise" baseFrequency=".018 .16" numOctaves="3" seed="3" stitchTiles="stitch"/>
+  <feColorMatrix values="0 0 0 0 .86  0 0 0 0 .8  0 0 0 0 .7  0 0 0 1.5 -.95"/>
+</filter>
+<rect width="240" height="120" filter="url(#n)"/>
+</svg>
