@@ -28,7 +28,7 @@
   //
   // A few marks per window, placed at random spots of the frame band (the 12px between
   // the outer edge and the glass): along the straight sides and the bottom (at the apex
-  // the band is too thin). Rusty gold with a pressed-in look (dark edge below, faint light above).
+  // the band is too thin). Rusty gold, pressed into the frame (dark edge above, faint light below, as in a groove).
   // Seeded by the window index, so they stay in the same places on every visit.
   const FRAME = 12;                  // frame width in px, as .glass inset in style.css
   const BOX_W = 250, BOX_H = 250 * 5 / 3;
@@ -105,8 +105,8 @@
     const body = marks.join("");
     return `
       <svg class="frame-marks" viewBox="0 0 ${BOX_W} ${BOX_H.toFixed(2)}" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-        <g class="frame-marks__shade" transform="translate(.45 .55)">${body}</g>
-        <g class="frame-marks__light" transform="translate(-.35 -.4)">${body}</g>
+        <g class="frame-marks__shade" transform="translate(-.4 -.5)">${body}</g>
+        <g class="frame-marks__light" transform="translate(.4 .5)">${body}</g>
         <g class="frame-marks__gold">${body}</g>
       </svg>`;
   }
