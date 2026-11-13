@@ -194,8 +194,14 @@
       poems.push({ id, date, title, text: bodyPart });
     }
 
-    // Sort by date (ISO dates)
-    if (!opts.keepOrder) poems.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    // Sort by date. A poem without a date sorts with the date of the poem before it in
+    // the file, so it stays next to its neighbour (collections imported from the forum
+    // are in publishing order and many poems there have no date). Sort is stable.
+    if (!opts.keepOrder) {
+      let prev = "";
+      const key = new Map(poems.map(p => { if (p.date) prev = p.date; return [p, p.date || prev]; }));
+      poems.sort((a, b) => key.get(a).localeCompare(key.get(b)));
+    }
 
     return poems;
   }
