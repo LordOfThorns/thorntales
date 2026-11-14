@@ -22,7 +22,9 @@
   ];
 
   const COLORS = ['#4a1f24', '#1f3a2c', '#1d2742', '#2e2233', '#3d3020', '#16171d', '#40282f', '#24333a', '#3a2a1a', '#2b1c2e'];
-  const TAKE_DELAY_MS = 620; // the fall, then the section opens
+  const FALL_MS = 700;        // the book falls off the desk
+  const TAKE_DELAY_MS = 1150; // the section opens while the leaves are still in the air
+  const SPRITE_DIR = "/assets/img/texts/"; // <section id>/1.png, 2.png, ... (see README.md there)
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   const host = document.getElementById('desk');
@@ -47,6 +49,7 @@
   }
 
   let lastWidth = 0;
+  let scale = 1;
   // titles are measured with the site font, so wait for it (but not for long)
   Promise.race([document.fonts ? document.fonts.ready : null, new Promise((r) => setTimeout(r, 600))])
     .then(() => layout());
@@ -60,6 +63,7 @@
     host.innerHTML = '';
 
     const k = Math.max(0.62, Math.min(1, W / 1000)); // size of everything
+    scale = k;
     const titlePx = Math.round(13 * Math.max(0.85, k));
     const stacksN = W < 520 ? 2 : W < 820 ? 3 : 4;
     const deskH = Math.round(46 * k);
@@ -183,6 +187,7 @@
     if (o.upright) el.style.transformOrigin = '0 100%';
     if (b.section) {
       el.href = `/texts.html?s=${encodeURIComponent(b.section.id)}`;
+      el.dataset.section = b.section.id;
       el.innerHTML = `<span class="book__title">${escapeHtml(b.section.label)}</span>`;
       el.addEventListener('click', (e) => {
         if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
@@ -198,6 +203,99 @@
       if (Math.random() < 0.35) el.classList.add('book--plain-band');
     }
     return el;
+  }
+
+  // ---------- What falls out of a book ----------
+  //
+  // Every section has its own folder of sprites: SPRITE_DIR/<section id>/1.png, 2.png, ...
+  // numbered without gaps. They are found by trying 1.png, 2.png, ... until one is missing,
+  // so new sprites only need to be dropped into the folder. Yellowed paper slips are drawn
+  // by CSS and fall out of every book.
+  const sprites = new Map(); // section id -> [urls]
+  function findSprites(id) {
+    if (sprites.has(id)) return;
+    const list = [];
+    sprites.set(id, list);
+    const tryNext = (n) => {
+      if (n > 40) return;
+      const im = new Image();
+      im.onload = () => { list.push(im.src); tryNext(n + 1); };
+      im.src = `${SPRITE_DIR}${encodeURIComponent(id)}/${n}.png`;
+    };
+    tryNext(1);
+  }
+  // start looking right away, so the pictures are ready by the first click
+  SECTIONS.forEach((s) => findSprites(s.id));
+
+  function spill(bookEl) {
+    const k = scale;
+    const hostBox = host.getBoundingClientRect();
+    const box = bookEl.getBoundingClientRect();
+    const cx = box.left + box.width / 2 - hostBox.left;
+    const cy = box.top + box.height / 2 - hostBox.top;
+    const list = sprites.get(bookEl.dataset.section) || [];
+    const frag = document.createDocumentFragment();
+    const jobs = [];
+
+    const pieces = [];
+    const nSprites = list.length ? Math.round(rand(8, 13)) : 0;
+    for (let i = 0; i < nSprites; i++) pieces.push({ src: list[Math.floor(Math.random() * list.length)] });
+    // pages torn out of this very book: the spine length is the height of its pages
+    const pageH = bookEl.offsetWidth * 0.9;
+    const nSlips = Math.round(rand(4, 7));
+    for (let i = 0; i < nSlips; i++) pieces.push({ slip: true });
+
+    for (const p of pieces) {
+      let el;
+      if (p.slip) {
+        el = document.createElement('span');
+        el.className = 'spill spill--slip';
+        const h = pageH * rand(0.96, 1.02), w = h * rand(0.64, 0.7);
+        el.style.width = `${Math.round(w)}px`;
+        el.style.height = `${Math.round(h)}px`;
+        el.style.padding = `${Math.round(h * 0.08)}px ${Math.round(w * 0.11)}px ${Math.round(h * 0.1)}px`; // margins
+        el.style.setProperty('--line', `${Math.max(4, h / 34).toFixed(1)}px`); // line spacing grows with the page
+        el.style.setProperty('--tone', rand(0.75, 1).toFixed(2));
+      } else {
+        el = document.createElement('img');
+        el.className = 'spill';
+        el.src = p.src;
+        el.alt = '';
+        el.style.width = `${Math.round(rand(30, 54) * k)}px`;
+      }
+      // centred on a point of the book (pages are as big as the book, so this matters)
+      const half = parseFloat(el.style.width) / 2;
+      const halfH = p.slip ? parseFloat(el.style.height) / 2 : half;
+      el.style.left = `${(cx + rand(-0.25, 0.25) * box.width - half).toFixed(1)}px`;
+      el.style.top = `${(cy + rand(-8, 8) - halfH).toFixed(1)}px`;
+      frag.appendChild(el);
+
+      // burst out of the pages, then drift down swaying like a leaf
+      const bx = rand(-150, 150) * k, by = -rand(30, 120) * k;
+      const fallY = rand(260, 420) * k;
+      const sway = rand(14, 34) * k * (Math.random() < 0.5 ? -1 : 1);
+      const r0 = rand(-40, 40), spin = rand(120, 320) * (Math.random() < 0.5 ? -1 : 1);
+      const flip = Math.random() < 0.5 ? 'rotateX' : 'rotateY'; // paper and leaves turn over as they fall
+      const at = (t, x, y, extra = {}) => ({
+        offset: t,
+        transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) rotate(${(r0 + spin * t).toFixed(0)}deg) ${flip}(${(t * 540).toFixed(0)}deg)`,
+        ...extra,
+      });
+      jobs.push([el, [
+        at(0, 0, 0, { opacity: 0 }),
+        at(0.06, bx * 0.25, by * 0.4, { opacity: 1, easing: 'cubic-bezier(.2,.8,.4,1)' }),
+        at(0.2, bx, by, { easing: 'ease-in-out' }),
+        at(0.42, bx + sway, by + fallY * 0.3, { easing: 'ease-in-out' }),
+        at(0.64, bx - sway * 0.8, by + fallY * 0.6, { easing: 'ease-in-out' }),
+        at(0.84, bx + sway * 0.6, by + fallY * 0.85, { opacity: 1, easing: 'ease-in' }),
+        at(1, bx, by + fallY, { opacity: 0 }),
+      ], { duration: rand(1300, 1900), delay: rand(60, 220), fill: 'both' }]);
+    }
+
+    host.appendChild(frag);
+    for (const [el, kf, opt] of jobs) {
+      el.animate(kf, opt).finished.then(() => el.remove(), () => {});
+    }
   }
 
   // The clicked book slides out of its stack, tips over the edge and falls off the
@@ -216,7 +314,8 @@
       { offset: 0.2, transform: `translate(${dir * 16}px, -12px) rotate(${r - dir * 5}deg) ${out}`, opacity: 1, easing: 'cubic-bezier(.5,0,.9,.5)' },
       { offset: 0.82, opacity: 1 },
       { transform: `translate(${dir * 80}px, ${drop}px) rotate(${r + dir * 62}deg) ${out}`, opacity: 0 },
-    ], { duration: TAKE_DELAY_MS + 80, fill: 'forwards' });
+    ], { duration: FALL_MS, fill: 'forwards' });
+    spill(el);
 
     // the books that lay on it drop into the gap, with a small bump at the end
     const stack = el.dataset.stack, level = +el.dataset.level, gap = +el.dataset.drop;

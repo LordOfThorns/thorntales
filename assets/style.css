@@ -1940,6 +1940,7 @@ textarea.input{
   margin: 30px auto 10px;
   max-width: 1100px;
   min-height: 300px;
+  overflow-x: clip; /* flying pages and leaves must not widen the page; downwards they may fall freely */
 }
 
 /* столешница: тёмное дерево с волокнами, передняя кромка */
@@ -2038,4 +2039,26 @@ textarea.input{
 
 @media (prefers-reduced-motion: reduce){
   .book{ transition: none; }
+}
+
+/* то, что высыпается из падающей книги (texts.js): спрайты раздела и пожелтевшие листки */
+.spill{
+  position: absolute;
+  z-index: 150;
+  pointer-events: none;
+  height: auto;
+  will-change: transform, opacity;
+  backface-visibility: visible;
+}
+
+
+/* выпавшая страница книги: пожелтевшая бумага, поля и строчки текста */
+.spill--slip{
+  padding: 5px 4px 7px; /* margins of the page (in px: % would be taken from the desk width) */
+  border-radius: 1px 3px 2px 1px;
+  background:
+    repeating-linear-gradient(180deg, rgba(60,45,25,.34) 0 1px, rgba(0,0,0,0) 1px var(--line, 4px)) content-box,
+    radial-gradient(ellipse at 70% 80%, rgba(150,110,50,.25), rgba(0,0,0,0) 60%) padding-box,
+    linear-gradient(165deg, rgba(238,224,182,var(--tone,1)), rgba(214,192,138,var(--tone,1))) padding-box;
+  box-shadow: 0 2px 5px rgba(0,0,0,.4), inset 0 0 6px rgba(120,90,40,.25);
 }
