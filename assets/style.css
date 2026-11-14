@@ -2395,3 +2395,97 @@ textarea.input{
 @media (prefers-reduced-motion: reduce){
   .spider-hang{ animation: none; }
 }
+
+
+/* =====================================================
+   СБОРНИКИ СТИХОВ: старые листки бумаги (poetry.html)
+   Бумага — отдельный слой .poetry-card__paper, обрезанный по неровному краю
+   (--edge из poetry-index.js); тень даёт drop-shadow на самой карточке, поэтому
+   она повторяет рваный край. Пятна (--spots), оттенок (--tone), наклон (--rot)
+   и загнутый уголок (--fold) у каждого листка свои.
+   ===================================================== */
+
+.poetry-grid{ gap: 22px 20px; }
+
+.poetry-card{
+  position: relative;
+  isolation: isolate;
+  padding: 18px 20px 18px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  color: #2c2218;
+  transform: rotate(var(--rot, 0deg));
+  filter: drop-shadow(0 7px 10px rgba(0, 0, 0, .5)) drop-shadow(0 1px 1px rgba(0, 0, 0, .45));
+  transition: transform 260ms cubic-bezier(.2,.8,.3,1), filter 260ms ease;
+}
+
+.poetry-card:hover,
+.poetry-card:focus-visible{
+  transform: rotate(0deg) translateY(-4px);
+  filter: drop-shadow(0 14px 18px rgba(0, 0, 0, .55)) drop-shadow(0 2px 2px rgba(0, 0, 0, .4));
+  border-color: transparent;
+  box-shadow: none;
+  outline: none;
+}
+
+.poetry-card__paper{
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  clip-path: var(--edge, none);
+  background:
+    var(--spots, linear-gradient(transparent, transparent)),
+    url('img/paper-fibers.svg') var(--px, 0) var(--py, 0) / 240px 240px repeat,
+    /* выцветшая линовка */
+    repeating-linear-gradient(180deg, rgba(0,0,0,0) 0 23px, rgba(70, 90, 120, .14) 23px 24px) 0 40px / 100% calc(100% - 52px) no-repeat,
+    /* края потемнели от времени и рук */
+    radial-gradient(ellipse 80% 85% at 50% 45%, rgba(0,0,0,0) 60%, rgba(95, 68, 32, .26) 100%),
+    linear-gradient(170deg, #ddd3b8, #cec3a4 60%, #c4b796);
+  filter: brightness(var(--tone, .92)) saturate(.85);
+}
+
+/* загнутый уголок: отогнутый треугольник бумаги с тенью под ним */
+.poetry-card__fold{
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: -1;
+  width: var(--fold, 0px);
+  height: var(--fold, 0px);
+  background: linear-gradient(225deg,
+    rgba(0,0,0,0) 0 49%, rgba(40, 28, 14, .35) 50%, #b8aa86 53%, #c9bc9b 100%);
+  filter: brightness(var(--tone, .92));
+}
+
+.poetry-card__title{
+  color: #2a1e12;
+  font-weight: 750;
+  letter-spacing: .2px;
+  position: relative;
+}
+
+.poetry-card__desc{
+  color: rgba(48, 36, 22, .82);
+  position: relative;
+}
+
+.poetry-card__count{
+  top: 14px;
+  right: calc(14px + var(--fold, 0px) * .7);
+  color: rgba(70, 52, 32, .55);
+  font-weight: 600;
+}
+
+.poetry-card__img{
+  position: relative;
+  border-radius: 2px;
+  filter: sepia(.25) saturate(.85);
+  mix-blend-mode: multiply;
+}
+
+@media (prefers-reduced-motion: reduce){
+  .poetry-card{ transition: none; }
+}
