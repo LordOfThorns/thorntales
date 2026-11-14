@@ -323,7 +323,7 @@
           ${shown.map(p => `
             <a class="poetry-toc__link" href="#${escapeAttr(p.id)}">
               <span class="poetry-toc__date">${escapeHtml(p.date || '')}</span>
-              <span class="poetry-toc__title">${escapeHtml((p.tr || p).title || '')}</span>
+              <span class="poetry-toc__title">${escapeHtml(tocTitle(p.tr || p))}</span>
             </a>
           `).join('')}
         </div>
@@ -710,6 +710,16 @@
         btn.textContent = t(showingOriginal ? 'poems.showTranslation' : 'poems.showOriginal');
       });
     });
+  }
+
+  // TOC label: a placeholder title ("***", "...", empty) is replaced by the first line of the text
+  function tocTitle(p) {
+    const title = (p.title || '').trim();
+    if (title && !/^[\s*.…]+$/.test(title)) return title;
+    const text = RichEdit.plain((p.html || '').replace(/<br\s*\/?>|<\/(p|div)>/gi, '\n'));
+    const first = text.split('\n').map(s => s.trim()).find(Boolean);
+    if (!first) return title;
+    return first.replace(/[\s,;:.!?…—–-]+$/, '') + '…';
   }
 
   function makeId(date, title){
