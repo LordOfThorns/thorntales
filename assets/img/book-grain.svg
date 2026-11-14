@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+<!-- Relief of old book cloth / leather: noise lit from the top left, grey around 50%,
+     blended over the cover colour with soft-light (texts.html). Seamless. -->
+<filter id="g" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+  <feTurbulence type="fractalNoise" baseFrequency=".95 1.05" numOctaves="2" seed="5" stitchTiles="stitch" result="n"/>
+  <feDiffuseLighting in="n" surfaceScale=".8" diffuseConstant="1" lighting-color="#ffffff">
+    <feDistantLight azimuth="225" elevation="52"/>
+  </feDiffuseLighting>
+  <!-- squeeze the relief towards mid grey: soft-light then only hints at it -->
+  <feComponentTransfer>
+    <feFuncR type="linear" slope=".32" intercept=".34"/>
+    <feFuncG type="linear" slope=".32" intercept=".34"/>
+    <feFuncB type="linear" slope=".32" intercept=".34"/>
+  </feComponentTransfer>
+</filter>
+<rect width="200" height="200" filter="url(#g)"/>
+</svg>

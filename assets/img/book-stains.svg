@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="220" height="160" viewBox="0 0 220 160">
-<!-- Stains and darker patches for old book spines (texts.html). Dark, semi-transparent. -->
-<filter id="n" x="0" y="0" width="100%" height="100%">
-  <feTurbulence type="fractalNoise" baseFrequency=".022 .06" numOctaves="3" seed="7" stitchTiles="stitch"/>
-  <feColorMatrix values="0 0 0 0 .05  0 0 0 0 .03  0 0 0 0 .02  0 0 0 1.5 -.5"/>
-</filter>
-<rect width="220" height="160" filter="url(#n)"/>
-</svg>

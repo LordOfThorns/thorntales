@@ -1958,7 +1958,8 @@ textarea.input{
 }
 
 /* книга корешком к зрителю: старая, с чердака или из подвала.
-   Пятна и потёртости — шумовые SVG-текстуры (у каждой книги свой сдвиг, --bx/--by),
+   Фактура: рельеф кожи (book-grain, soft-light), одно потёртое пятно блеска (--wx/--wy),
+   по краям рваная полоса стёртой кожи с рыжей основой (::before, book-edgewear); сдвиг текстур (--bx/--by),
    выцветание (--sat, --br) и неровные стёртые углы (--rad) задаёт texts.js. */
 .book{
   position: absolute;
@@ -1969,9 +1970,8 @@ textarea.input{
   border-radius: var(--rad, 5px);
   text-decoration: none;
   background:
-    /* потёртости и пятна */
-    url('img/book-scuffs.svg') var(--bx, 0) var(--by, 0) / 240px 120px repeat,
-    url('img/book-stains.svg') var(--by, 0) var(--bx, 0) / 220px 160px repeat,
+    /* одно мягкое потёртое пятно блеска в случайном месте (--wx/--wy из texts.js) */
+    radial-gradient(ellipse 30% 75% at var(--wx, 40%) var(--wy, 50%), rgba(225,215,200,.1), rgba(225,215,200,0) 70%),
     /* стёртые края корешка: к торцам светлее и пыльнее */
     linear-gradient(90deg, rgba(210,190,160,.16) 0, rgba(210,190,160,0) 5%, rgba(210,190,160,0) 95%, rgba(210,190,160,.14) 100%),
     /* рёбра переплёта и тусклые золотые полоски у торцов */
@@ -1983,7 +1983,10 @@ textarea.input{
       transparent 17px 21px, rgba(176,140,82,.22) 21px 22px, transparent 22px),
     /* плоский корешок: пыльная верхняя кромка, тёмная нижняя, середина ровная */
     linear-gradient(180deg, rgba(190,180,160,.2) 0, rgba(190,180,160,.06) 3px, rgba(0,0,0,0) 4px, rgba(0,0,0,.06) 50%, rgba(0,0,0,0) calc(100% - 5px), rgba(0,0,0,.45) calc(100% - 2px), rgba(0,0,0,.6) 100%),
+    /* рельеф ткани переплёта */
+    url('img/book-grain.svg') var(--by, 0) var(--bx, 0) / 200px 200px repeat,
     var(--c);
+  background-blend-mode: normal, normal, normal, normal, normal, soft-light, normal;
   box-shadow:
     0 1px 0 rgba(255,255,255,.04) inset,
     0 -1px 0 rgba(0,0,0,.4) inset,
@@ -1996,14 +1999,16 @@ textarea.input{
 /* у некоторых безымянных книг ещё два ребра посередине */
 .book--plain-band{
   background:
-    url('img/book-scuffs.svg') var(--bx, 0) var(--by, 0) / 240px 120px repeat,
-    url('img/book-stains.svg') var(--by, 0) var(--bx, 0) / 220px 160px repeat,
+    radial-gradient(ellipse 30% 75% at var(--wx, 40%) var(--wy, 50%), rgba(225,215,200,.1), rgba(225,215,200,0) 70%),
     linear-gradient(90deg, rgba(210,190,160,.16) 0, rgba(210,190,160,0) 5%, rgba(210,190,160,0) 95%, rgba(210,190,160,.14) 100%),
     linear-gradient(90deg,
       transparent 0 38%, rgba(0,0,0,.3) 38% 39%, rgba(176,140,82,.2) 39% 40%, transparent 40% 60%,
       rgba(0,0,0,.3) 60% 61%, rgba(176,140,82,.2) 61% 62%, transparent 62%),
     linear-gradient(180deg, rgba(190,180,160,.2) 0, rgba(190,180,160,.06) 3px, rgba(0,0,0,0) 4px, rgba(0,0,0,.06) 50%, rgba(0,0,0,0) calc(100% - 5px), rgba(0,0,0,.45) calc(100% - 2px), rgba(0,0,0,.6) 100%),
+    /* рельеф ткани переплёта */
+    url('img/book-grain.svg') var(--by, 0) var(--bx, 0) / 200px 200px repeat,
     var(--c);
+  background-blend-mode: normal, normal, normal, normal, soft-light, normal;
 }
 
 /* название: тусклое тиснёное золото, местами стёртое */
@@ -2061,4 +2066,332 @@ textarea.input{
     radial-gradient(ellipse at 70% 80%, rgba(150,110,50,.25), rgba(0,0,0,0) 60%) padding-box,
     linear-gradient(165deg, rgba(238,224,182,var(--tone,1)), rgba(214,192,138,var(--tone,1))) padding-box;
   box-shadow: 0 2px 5px rgba(0,0,0,.4), inset 0 0 6px rgba(120,90,40,.25);
+}
+
+/* падающая книга — объёмная коробка (texts.js, bookBox): корешок, обложки, блок страниц.
+   Обёртка даёт перспективу и гаснет, коробка внутри вращается в 3D. */
+.book3d-wrap{
+  position: absolute;
+  z-index: 100;
+  pointer-events: none;
+  perspective: 700px;
+  will-change: opacity;
+}
+
+.book3d{
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+
+
+.book3d__face{
+  position: absolute;
+  backface-visibility: hidden;
+  filter: saturate(var(--sat, .75)) brightness(var(--br, .9));
+}
+
+/* обложка: та же потёртая ткань, по краю чуть темнее */
+.book3d__cover{
+  border-radius: 3px;
+  background:
+    radial-gradient(ellipse 45% 45% at var(--wx, 40%) var(--wy, 50%), rgba(225,215,200,.1), rgba(225,215,200,0) 70%),
+    radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 55%, rgba(0,0,0,.4) 100%),
+    url('img/book-grain.svg') var(--bx, 0) var(--by, 0) / 200px 200px repeat,
+    var(--c);
+  background-blend-mode: normal, normal, soft-light, normal;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.35);
+}
+
+/* блок страниц между двумя крышками: пожелтевшие обрезы с тонкими полосками листов */
+.book3d__pages{
+  border-top: 3px solid var(--c);
+  border-bottom: 3px solid var(--c);
+  background:
+    repeating-linear-gradient(180deg, rgba(110,85,45,.0) 0 1px, rgba(110,85,45,.28) 1px 2px),
+    linear-gradient(90deg, rgba(120,90,40,.35), rgba(120,90,40,0) 12%, rgba(120,90,40,0) 88%, rgba(120,90,40,.35)),
+    linear-gradient(180deg, #ddc995, #c9b07a);
+}
+
+/* следы жизни книги, у каждой свои (texts.js рисует их в --scratch):
+   тонкие царапины с тёмной бороздкой, потёртые места; плюс выцветшие, подтёртые
+   торцы и кромки — плавно, без пятен. Сила износа своя у каждой книги (--wear). */
+.book::before,
+.book3d__cover::before{
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    var(--scratch, none) 0 0 / 100% 100% no-repeat,
+    /* торцы: краска стёрта, ткань выцвела и посветлела */
+    linear-gradient(90deg,
+      rgba(215,200,175,calc(var(--wear, .5) * .22)) 0,
+      rgba(215,200,175,0) var(--we, 10%),
+      rgba(215,200,175,0) calc(100% - var(--we, 10%)),
+      rgba(215,200,175,calc(var(--wear, .5) * .2)) 100%),
+    /* длинные кромки: тонкая подтёртая полоска */
+    linear-gradient(180deg,
+      rgba(215,200,175,calc(var(--wear, .5) * .16)) 0,
+      rgba(215,200,175,0) 4px,
+      rgba(215,200,175,0) calc(100% - 4px),
+      rgba(215,200,175,calc(var(--wear, .5) * .1)) 100%);
+}
+
+.book__title{ position: relative; z-index: 1; }
+
+/* верхняя крышка книги, видная чуть сверху: узкая полоска над корешком.
+   Лежащая сверху книга её закрывает — так перекрытия в стопке читаются как объём. */
+.book__top{
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: calc(100% - 1px);
+  height: var(--top, 6px);
+  clip-path: polygon(2.5% 0, 97.5% 0, 100% 100%, 0 100%);
+  background:
+    linear-gradient(180deg, rgba(0,0,0,.35), rgba(255,255,255,.05) 70%, rgba(0,0,0,.25)),
+    url('img/book-grain.svg') 0 0 / 200px 200px repeat,
+    var(--c);
+  background-blend-mode: normal, soft-light, normal;
+  pointer-events: none;
+}
+
+/* пыль от падающей книги (texts.js, dust): пылинки и мягкое облачко */
+.dust{
+  position: absolute;
+  z-index: 140;
+  pointer-events: none;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(214, 204, 184, .9) 0, rgba(214, 204, 184, .35) 45%, rgba(214, 204, 184, 0) 70%);
+  will-change: transform, opacity;
+}
+
+.dust--cloud{
+  z-index: 139;
+  background: radial-gradient(ellipse at 50% 50%, rgba(190, 180, 160, .28) 0, rgba(190, 180, 160, .12) 40%, rgba(190, 180, 160, 0) 70%);
+}
+
+/* книга, прислонённая к стопке сзади: глубже на столе, в тени */
+.book--back{ filter: saturate(calc(var(--sat, .75) * .8)) brightness(calc(var(--br, .9) * .62)); }
+
+/* столешница сверху: полоса тёмного дерева уходит назад, к дальнему краю темнее */
+.desk__surface{
+  position: absolute;
+  left: -1%;
+  right: -1%;
+  z-index: 1;
+  pointer-events: none;
+  clip-path: polygon(1.5% 0, 98.5% 0, 100% 100%, 0 100%);
+  background:
+    repeating-linear-gradient(90deg, rgba(0,0,0,0) 0 37px, rgba(0,0,0,.12) 37px 38px, rgba(0,0,0,0) 38px 61px, rgba(255,220,180,.03) 61px 62px),
+    linear-gradient(180deg, #0d0806 0, #1c120c 70%, #2a1b13 100%);
+}
+
+/* паутина под столом и паук на нити (texts.js, addWeb) */
+.web{
+  position: absolute;
+  top: 100%;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.web path{
+  fill: none;
+  stroke: rgba(220, 220, 232, .2);
+  stroke-width: .6;
+  stroke-linecap: round;
+}
+
+.spider-hang{
+  position: absolute;
+  z-index: 3;
+  width: 0;
+  height: calc(var(--len) + var(--size));
+  transform-origin: 0 0;
+  animation: spider-sway 3.8s ease-in-out infinite alternate;
+}
+
+@keyframes spider-sway{
+  from{ transform: rotate(-5deg); }
+  to  { transform: rotate(5deg); }
+}
+
+.spider-hang__thread{
+  position: absolute;
+  left: -.5px;
+  top: 0;
+  width: 1px;
+  height: var(--len);
+  background: linear-gradient(180deg, rgba(220,220,232,.1), rgba(220,220,232,.35));
+}
+
+.spider{
+  position: absolute;
+  top: calc(var(--len) - var(--size) * .28);
+  left: calc(var(--size) / -2);
+  width: var(--size);
+  height: var(--size);
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.spider svg{ overflow: visible; }
+
+.spider__legs path,
+.spider__fist path{
+  fill: none;
+  stroke: #2b2533;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+
+.spider__body{
+  fill: #2b2533;
+  stroke: rgba(210, 200, 230, .4);
+  stroke-width: .6;
+}
+
+.spider__eye{ fill: rgba(220, 120, 110, .9); }
+
+.spider:focus-visible{ outline: 1px dashed rgba(200,190,220,.5); outline-offset: 4px; }
+
+/* грозит кулаком, как человек: плечо в сторону, предплечье торчит вверх, кулак у головы,
+   и предплечье коротко трясётся от локтя. Обычная передняя лапа на это время прячется,
+   вместо неё появляется «рука». Брови хмурятся, глаза наливаются красным, паук дёргается.
+   transform-origin для transform-box: view-box задаётся в координатах viewBox. */
+.spider__arm path,
+.spider__fist path{
+  fill: none;
+  stroke: #2b2533;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.spider__arm{ opacity: 0; }
+
+.spider__forearm{
+  transform-box: view-box;
+  transform-origin: 11.5px -1.5px; /* the elbow */
+}
+
+.spider__knuckles circle{ fill: #2b2533; stroke: rgba(210, 200, 230, .5); stroke-width: .55; }
+.spider__knuckles path{ fill: none; stroke: rgba(210, 200, 230, .6); stroke-width: .55; stroke-linecap: round; }
+.spider__knuckles{
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.spider__brows path{
+  fill: none;
+  stroke: rgba(240, 190, 180, .95);
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+.spider__brows{ opacity: 0; }
+
+.spider.is-angry .spider__fist{ animation: spider-leg-away 1.7s linear; }
+.spider.is-angry .spider__arm{ animation: spider-arm 1.7s linear; }
+.spider.is-angry .spider__forearm{ animation: spider-shake 1.7s ease-in-out; }
+.spider.is-angry .spider__knuckles{ animation: spider-clench 1.7s ease-out; }
+.spider.is-angry .spider__brows{ animation: spider-frown 1.7s ease-in-out; }
+.spider.is-angry .spider__eye{ animation: spider-glare 1.7s ease-in-out; }
+.spider.is-angry svg{ animation: spider-huff 1.7s ease-in-out; }
+
+/* the usual leg is swapped for the raised arm */
+@keyframes spider-leg-away{
+  0%, 100%{ opacity: 1; }
+  6%, 92% { opacity: 0; }
+}
+
+@keyframes spider-arm{
+  0%, 100%{ opacity: 0; }
+  6%, 92% { opacity: 1; }
+}
+
+/* the fist goes up and is shaken: small quick strokes forward and back */
+@keyframes spider-shake{
+  0%  { transform: rotate(60deg); }
+  10% { transform: rotate(-4deg); }
+  18% { transform: rotate(14deg); }
+  26% { transform: rotate(-10deg); }
+  34% { transform: rotate(14deg); }
+  42% { transform: rotate(-10deg); }
+  50% { transform: rotate(14deg); }
+  58% { transform: rotate(-10deg); }
+  66% { transform: rotate(12deg); }
+  76% { transform: rotate(0deg); }
+  100%{ transform: rotate(0deg); }
+}
+
+@keyframes spider-clench{
+  0%      { transform: scale(.4); }
+  12%     { transform: scale(1.25); }
+  20%, 100%{ transform: scale(1); }
+}
+
+@keyframes spider-frown{
+  0%, 100%{ opacity: 0; }
+  8%, 88% { opacity: 1; }
+}
+
+@keyframes spider-glare{
+  0%, 100%{ fill: rgba(220, 120, 110, .9); }
+  10%, 86%{ fill: #ff4a3a; }
+}
+
+/* the whole spider leans in and huffs */
+@keyframes spider-huff{
+  0%, 100%{ transform: none; }
+  10%     { transform: translateY(-2px) scale(1.08); }
+  18%, 34%, 50%{ transform: translate(-1px, -1px) rotate(-4deg) scale(1.06); }
+  26%, 42%, 58%{ transform: translate(1px, 0) rotate(3deg) scale(1.06); }
+  80%     { transform: scale(1.03); }
+}
+
+/* «ругательства» вокруг паука: #@!, знак злости, пыхтение (texts.js, grumble) */
+.grumble{
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: .5px;
+  white-space: nowrap;
+  color: #e86a5c;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .7);
+  will-change: transform, opacity;
+}
+
+.grumble--anger svg{
+  display: block;
+  width: 1.7em;
+  height: 1.7em;
+  overflow: visible;
+}
+
+.grumble--anger path{
+  fill: none;
+  stroke: #e86a5c;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.grumble--puff{
+  width: 1.3em;
+  height: .9em;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(210, 200, 220, .45), rgba(210, 200, 220, 0) 70%);
+}
+
+
+@media (prefers-reduced-motion: reduce){
+  .spider-hang{ animation: none; }
 }
