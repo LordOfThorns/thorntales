@@ -24,49 +24,9 @@
   const db = window.Auth ? Auth.client : null;
   const LANGS = ['ru', 'en', 'de'];
 
-  // ---------- HTML of a text: only a small, safe set of tags ----------
-
-  const TAGS = {
-    B: 'b', STRONG: 'b', I: 'i', EM: 'i', U: 'u', S: 's', BR: 'br', P: 'p', DIV: 'p',
-    BLOCKQUOTE: 'blockquote', HR: 'hr', A: 'a', UL: 'ul', OL: 'ol', LI: 'li', H3: 'h3', H4: 'h4',
-  };
-  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
-  }[ch]));
-
-  function sanitize(html) {
-    const doc = new DOMParser().parseFromString(`<div>${html || ''}</div>`, 'text/html');
-    const walk = (node) => {
-      let out = '';
-      for (const c of node.childNodes) {
-        if (c.nodeType === 3) { out += esc(c.textContent); continue; }
-        if (c.nodeType !== 1) continue;
-        if (/^(SCRIPT|STYLE|TEMPLATE|IFRAME|OBJECT|EMBED|NOSCRIPT|SVG|MATH)$/i.test(c.tagName)) continue; // dropped with their content
-        const tag = TAGS[c.tagName];
-        const inner = walk(c);
-        if (!tag) { out += inner; continue; }
-        if (tag === 'br' || tag === 'hr') { out += `<${tag}>`; continue; }
-        if (tag === 'a') {
-          const href = c.getAttribute('href') || '';
-          out += /^(https?:|mailto:)/i.test(href)
-            ? `<a href="${esc(href)}" target="_blank" rel="noopener">${inner}</a>` : inner;
-          continue;
-        }
-        if (tag === 'p') {
-          // centred paragraphs (class "c" from the import, or text-align from pasting)
-          const centred = c.classList.contains('c') || /text-align:\s*center/i.test(c.getAttribute('style') || '');
-          if (!inner.trim()) continue;
-          out += `<p${centred ? ' class="c"' : ''}>${inner}</p>`;
-          continue;
-        }
-        out += `<${tag}>${inner}</${tag}>`;
-      }
-      return out;
-    };
-    return walk(doc.body.firstChild).trim();
-  }
-
-  const plain = (html) => new DOMParser().parseFromString(html || '', 'text/html').body.textContent || '';
+  // HTML of a text: only a small, safe set of tags (rich-editor.js)
+  const { sanitize: rawSanitize, plain, esc } = window.RichEdit;
+  const sanitize = (html) => rawSanitize(html).trim();
 
   function makeId(date, title) {
     return `${date}-${title}`.toLowerCase().replace(/ё/g, 'е')
@@ -168,7 +128,11 @@
     header(sec.label, '');
     if (window.Layout) Layout.setCrumbs([{ label: sec.label }]);
     document.title = `${sec.label} · Thorntales`;
-    const visible = texts.filter((x) => !x.deleted || isAdmin);
+    const all = texts.filter((x) => !x.deleted || isAdmin);
+    // "only in my language": shown when some texts are not in the site language
+    const someMissing = all.some((x) => !langsOf(x).includes(siteLang));
+    const only = onlyMine();
+    const visible = only ? all.filter((x) => langsOf(x).includes(siteLang)) : all;
     const items = visible.map((x) => {
       const v = version(x);
       // not in the site language: show every language it is there in
@@ -192,9 +156,27 @@
     root.innerHTML = `
       ${note ? `<p class="text-note">${esc(note)}</p>` : ''}
       ${isAdmin ? `<div class="text-admin"><a class="btn" href="${esc(urlFor('new'))}">${esc(t('texts.newText', '+ Новый текст'))}</a></div>` : ''}
-      ${visible.length ? `<ol class="text-list">${items}</ol>` : `<p class="text-note">${esc(t('texts.empty', 'Эта книга пока пустая.'))}</p>`}
+      ${someMissing || only ? langOnlySwitch(only) : ''}
+      ${visible.length ? `<ol class="text-list">${items}</ol>`
+        : `<p class="text-note">${esc(only && all.length ? t('texts.noneInMyLang', 'На вашем языке здесь пока ничего нет.') : t('texts.empty', 'Эта книга пока пустая.'))}</p>`}
       <p class="texts-back"><a href="/texts.html">${esc(t('texts.back', '← к стопкам книг'))}</a></p>`;
   }
+
+  // "Only what is in my language": a per-reader wish kept in this browser, the same
+  // switch as on the poem pages (poems.js reads the same key)
+  const ONLY_KEY = 'thorntales.onlyMyLang';
+  function onlyMine() {
+    try { return localStorage.getItem(ONLY_KEY) === '1'; } catch (e) { return false; }
+  }
+  function langOnlySwitch(on) {
+    return `<label class="lang-only"><input type="checkbox" data-act="only-mine"${on ? ' checked' : ''}>
+      <span>${esc(t('texts.onlyMyLang', 'Только на моём языке'))}</span></label>`;
+  }
+  document.addEventListener('change', (e) => {
+    if (!e.target.matches('#desk [data-act="only-mine"]')) return;
+    try { localStorage.setItem(ONLY_KEY, e.target.checked ? '1' : '0'); } catch (err) { /* storage blocked */ }
+    list();
+  });
 
   // ---------- One text ----------
 
@@ -248,63 +230,7 @@
 
   // ---------- Editor (admin) ----------
 
-  // A rich text field: contenteditable with Bold / Italic, and an HTML mode that shows
-  // the same text as HTML source. What is saved is always passed through sanitize().
-  function richField(container, html) {
-    container.innerHTML = `
-      <div class="rich">
-        <div class="rich__bar" role="toolbar">
-          <button type="button" class="rich__btn" data-cmd="bold" title="${esc(t('texts.bold', 'Жирный'))}"><b>Ж</b></button>
-          <button type="button" class="rich__btn" data-cmd="italic" title="${esc(t('texts.italic', 'Курсив'))}"><i>К</i></button>
-          <span class="rich__sep"></span>
-          <button type="button" class="rich__btn rich__btn--wide" data-cmd="html" aria-pressed="false">HTML</button>
-        </div>
-        <div class="rich__area input" contenteditable="true"></div>
-        <textarea class="rich__source input" spellcheck="false" hidden></textarea>
-      </div>`;
-    const area = container.querySelector('.rich__area');
-    const src = container.querySelector('.rich__source');
-    const htmlBtn = container.querySelector('[data-cmd="html"]');
-    area.innerHTML = sanitize(html);
-    let htmlMode = false;
-    try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch (e) { /* old browsers */ }
-
-    container.querySelector('.rich__bar').addEventListener('mousedown', (e) => e.preventDefault()); // keep the selection
-    container.querySelector('.rich__bar').addEventListener('click', (e) => {
-      const cmd = e.target.closest('[data-cmd]')?.dataset.cmd;
-      if (!cmd) return;
-      if (cmd === 'html') {
-        htmlMode = !htmlMode;
-        if (htmlMode) {
-          src.value = sanitize(area.innerHTML).replace(/(<\/(p|blockquote|h3|h4|li|ul|ol)>|<hr>)/g, '$1\n');
-          src.style.height = `${Math.max(area.offsetHeight, 240)}px`;
-        } else {
-          area.innerHTML = sanitize(src.value);
-        }
-        area.hidden = htmlMode;
-        src.hidden = !htmlMode;
-        htmlBtn.setAttribute('aria-pressed', String(htmlMode));
-        container.querySelectorAll('[data-cmd="bold"], [data-cmd="italic"]').forEach((b) => { b.disabled = htmlMode; });
-        return;
-      }
-      if (!htmlMode) { area.focus(); document.execCommand(cmd); }
-    });
-    // pasting keeps only the allowed formatting
-    area.addEventListener('paste', (e) => {
-      e.preventDefault();
-      const cb = e.clipboardData;
-      const html = cb.getData('text/html');
-      if (html) document.execCommand('insertHTML', false, sanitize(html));
-      else document.execCommand('insertText', false, cb.getData('text/plain'));
-    });
-    area.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && ['b', 'i'].includes(e.key.toLowerCase())) {
-        e.preventDefault();
-        document.execCommand(e.key.toLowerCase() === 'b' ? 'bold' : 'italic');
-      }
-    });
-    return { get: () => sanitize(htmlMode ? src.value : area.innerHTML) };
-  }
+  const richField = (container, html) => RichEdit.field(container, html);
 
   function editor(x) {
     const isNew = !x;

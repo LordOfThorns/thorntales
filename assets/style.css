@@ -2707,3 +2707,25 @@ textarea.input{
   .text-list__item a{ grid-template-columns: minmax(0, 1fr); }
   .text-list__langs:empty{ display: none; }
 }
+
+/* поле стиха в редакторе: строки как набраны, Enter — новая строка */
+.rich--lines .rich__area{
+  white-space: pre-wrap;
+  font-size: 16px;
+  line-height: 1.7;
+}
+.rich--lines .rich__source{ white-space: pre-wrap; }
+
+/* «только на моём языке» над списком текстов и над стихами сборника */
+.lang-only{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.lang-only input{ accent-color: #8c78ff; width: 15px; height: 15px; margin: 0; }
+.lang-only:hover{ color: var(--ink); }

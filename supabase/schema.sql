@@ -188,6 +188,10 @@ create table if not exists public.poem_edits (
   primary key (catalog, poem_id)
 );
 
+-- translations of the poem made on the site: { "en": { "title": "...", "body": "..." }, "de": ... }
+-- (they win over data/poetry/<catalog>.<lang>.txt for that language)
+alter table public.poem_edits add column if not exists tr jsonb not null default '{}'::jsonb;
+
 alter table public.poem_edits enable row level security;
 
 drop trigger if exists poem_edits_touch on public.poem_edits;

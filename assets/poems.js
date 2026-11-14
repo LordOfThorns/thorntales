@@ -25,8 +25,14 @@
   // Page state
   let filePoems = [];          // poems from the txt file, file order
   const edits = new Map();     // poem id -> row of poem_edits
-  const trById = new Map();    // poem id -> translated poem
+  const LANGS = ['ru', 'en', 'de'];
+  const fileTr = new Map();    // lang -> Map(poem id -> translated poem from <cat>.<lang>.txt)
+  let sourceLang = 'ru';       // the language the collection is written in
   let poems = [];              // what is shown: file + edits, sorted
+  // "only what is in my language": a per-reader wish, kept in this browser (shared with texts)
+  const ONLY_KEY = 'thorntales.onlyMyLang';
+  let onlyMine = false;
+  try { onlyMine = localStorage.getItem(ONLY_KEY) === '1'; } catch (e) { /* storage blocked */ }
   let isAdmin = false;
   let editing = null;          // poem id being edited, '' = new poem form, null = none
   let activeTag = '';
@@ -58,14 +64,17 @@
     filePoems = parsePoemsTxt(raw).filter(p => !hiddenIds.has(p.id));
     for (const row of editRows) edits.set(row.poem_id, row);
 
-    // Translation for the reader's language, if this catalog is written in another one
-    const sourceLang = catInfo?.lang || 'ru';
+    // Translations from files, for every language but the original (missing files are fine);
+    // the editor needs all of them, the page shows the reader's one
+    sourceLang = catInfo?.lang || 'ru';
+    await Promise.all(LANGS.filter(l => l !== sourceLang).map(async (l) => {
+      const trRaw = await fetchText(`${dataDir}${encodeURIComponent(cat)}.${l}.txt`, false);
+      const m = new Map();
+      if (trRaw) for (const p of parsePoemsTxt(trRaw)) if (p.text.trim()) m.set(p.id, p);
+      fileTr.set(l, m);
+    }));
     if (lang !== sourceLang) {
-      const trRaw = await fetchText(`${dataDir}${encodeURIComponent(cat)}.${lang}.txt`, false);
-      if (trRaw) {
-        for (const p of parsePoemsTxt(trRaw)) if (p.text.trim()) trById.set(p.id, p);
-      }
-      const translatedCount = filePoems.filter(p => trById.has(p.id)).length;
+      const translatedCount = buildPoems().filter(p => p.tr).length;
       if (translatedCount) {
         pageSub.insertAdjacentHTML('afterend',
           `<p class="poetry-translated">${escapeHtml(t('poems.translatedCount', { n: translatedCount, total: filePoems.length }))}</p>`);
@@ -123,7 +132,7 @@
     if (!db) return [];
     const { data, error } = await db
       .from('poem_edits')
-      .select('poem_id, title, date, body, tags, updated_at')
+      .select('*') // '*' and not a list: works before and after the tr column is added
       .eq('catalog', cat);
     if (error) {
       console.warn('poem edits failed', error);
@@ -137,7 +146,8 @@
     const fileIds = new Set(filePoems.map(p => p.id));
     const list = filePoems.map(p => {
       const e = edits.get(p.id);
-      return e ? { ...fromRow(e), edited: true } : { ...p };
+      // a file poem is plain text: as HTML it is the escaped text (line breaks stay)
+      return e ? { ...fromRow(e), edited: true } : { ...p, html: escapeHtml(p.text) };
     });
     for (const e of edits.values()) {
       if (!fileIds.has(e.poem_id)) list.push({ ...fromRow(e), added: true });
@@ -147,15 +157,26 @@
     let prev = '';
     const key = new Map(list.map(p => { if (p.date) prev = p.date; return [p, p.date || prev]; }));
     list.sort((a, b) => key.get(a).localeCompare(key.get(b)));
-    for (const p of list) {
-      const tr = trById.get(p.id);
-      if (tr) p.tr = tr;
+    if (lang !== sourceLang) {
+      for (const p of list) {
+        const tr = translationOf(p.id, lang);
+        if (tr) p.tr = tr;
+      }
     }
     return list;
   }
 
   function fromRow(e) {
-    return { id: e.poem_id, title: e.title, date: e.date || '', text: e.body, tags: e.tags || [] };
+    // a poem saved on the site is HTML (bold, italic...) with its line breaks as typed
+    return { id: e.poem_id, title: e.title, date: e.date || '', html: e.body, tags: e.tags || [] };
+  }
+
+  // A poem in another language: a translation saved on the site wins over the file one
+  function translationOf(id, l) {
+    const e = edits.get(id)?.tr?.[l];
+    if (e && RichEdit.plain(e.body).trim()) return { title: e.title || '', html: e.body };
+    const f = fileTr.get(l)?.get(id);
+    return f && f.text.trim() ? { title: f.title, html: escapeHtml(f.text) } : null;
   }
 
   // ---------- Rendering ----------
@@ -288,7 +309,10 @@
   function render() {
     poems = buildPoems();
     if (activeTag && !poems.some(p => p.tags.includes(activeTag))) activeTag = '';
-    const shown = activeTag ? poems.filter(p => p.tags.includes(activeTag)) : poems;
+    let shown = activeTag ? poems.filter(p => p.tags.includes(activeTag)) : poems;
+    // "only in my language": for a reader whose language is not the collection's one
+    const canFilter = lang !== sourceLang;
+    if (canFilter && onlyMine) shown = shown.filter(p => p.tr || (isAdmin && editing === p.id));
 
     // TOC: sidebar on wide screens, collapsible block on narrow ones
     const wasOpen = toc.querySelector('details')?.open;
@@ -313,6 +337,11 @@
         ? renderForm(null)
         : `<div class="poem-admin"><button class="btn" type="button" data-act="new">${escapeHtml(t('poems.add'))}</button></div>`;
     }
+    if (canFilter) {
+      html += `<label class="lang-only"><input type="checkbox" data-act="only-mine"${onlyMine ? ' checked' : ''}>
+        <span>${escapeHtml(t('texts.onlyMyLang'))}</span></label>`;
+      if (onlyMine && !shown.length) html += `<p class="text-note">${escapeHtml(t('texts.noneInMyLang'))}</p>`;
+    }
     if (activeTag) {
       html += `<div class="poem-filter">${escapeHtml(t('poems.tagFilter'))}:
         <span class="poem-tag poem-tag--active">#${escapeHtml(activeTag)}</span>
@@ -320,6 +349,8 @@
     }
     html += shown.map(p => (isAdmin && editing === p.id) ? renderForm(p) : renderPoem(p)).join('');
     poemsHost.innerHTML = html;
+    const openForm = poemsHost.querySelector('.poem-edit');
+    if (openForm) initForm(openForm, editing === '' ? null : poems.find(x => x.id === editing));
 
     wireLangToggles();
 
@@ -375,15 +406,17 @@
         </header>
         ${tags}
         <div class="poem__body">
-          <pre class="poem__text">${escapeHtml(shown.text || '')}</pre>
+          <div class="poem__text">${RichEdit.sanitize(shown.html || '')}</div>
         </div>
       </article>
     `;
   }
 
-  // Editor for an existing poem (p) or a new one (p = null). Always edits the original.
+  // Editor for an existing poem (p) or a new one (p = null): the original and its
+  // translations on tabs (RU / EN / DE), each with a title and a text field with bold,
+  // italic and an HTML mode. Date and tags are shared. The fields are set up by
+  // initForm() once the form is in the page.
   function renderForm(p) {
-    const rows = Math.min(40, Math.max(8, (p?.text || '').split('\n').length + 2));
     let extra = '';
     if (p?.edited) extra = `<button class="btn btn--ghost" type="button" data-act="revert">${escapeHtml(t('poems.revert'))}</button>`;
     if (p?.added) extra = `<button class="btn btn--ghost" type="button" data-act="revert">${escapeHtml(t('poems.delete'))}</button>`;
@@ -391,23 +424,24 @@
       <article class="poem poem--editing"${p ? ` id="${escapeAttr(p.id)}"` : ''}>
         <form class="poem-edit" data-poem="${escapeAttr(p?.id || '')}">
           <div class="poem-edit__row">
-            <label class="field poem-edit__title">
-              <span class="field__label">${escapeHtml(t('poems.fieldTitle'))}</span>
-              <input class="input" name="title" maxlength="300" value="${escapeHtml(p?.title || '')}">
-            </label>
             <label class="field poem-edit__date">
               <span class="field__label">${escapeHtml(t('poems.fieldDate'))}</span>
               <input class="input" name="date" maxlength="10" placeholder="2026-11-13" value="${escapeHtml(p?.date || '')}" title="${escapeHtml(t('poems.dateHint'))}">
             </label>
+            <label class="field">
+              <span class="field__label">${escapeHtml(t('poems.fieldTags'))} <span class="field__hint">· ${escapeHtml(t('poems.tagsHint'))}</span></span>
+              <input class="input" name="tags" value="${escapeHtml((p?.tags || []).join(', '))}">
+            </label>
           </div>
+          <div class="text-edit__tabs" role="tablist"></div>
           <label class="field">
-            <span class="field__label">${escapeHtml(t('poems.fieldTags'))} <span class="field__hint">· ${escapeHtml(t('poems.tagsHint'))}</span></span>
-            <input class="input" name="tags" value="${escapeHtml((p?.tags || []).join(', '))}">
+            <span class="field__label">${escapeHtml(t('poems.fieldTitle'))}</span>
+            <input class="input" name="title" maxlength="300">
           </label>
-          <label class="field">
+          <div class="field">
             <span class="field__label">${escapeHtml(t('poems.fieldText'))}</span>
-            <textarea class="input poem-edit__text" name="body" rows="${rows}">${escapeHtml(p?.text || '')}</textarea>
-          </label>
+            <div class="poem-edit__body"></div>
+          </div>
           <p class="poem-edit__error" hidden></p>
           <div class="poem-edit__actions">
             <button class="btn btn--primary" type="submit">${escapeHtml(t('poems.save'))}</button>
@@ -419,9 +453,45 @@
     `;
   }
 
+  // State of the open poem form: the text in every language, and the open tab
+  let formState = null;
+  function initForm(form, p) {
+    const v = {};
+    for (const l of LANGS) v[l] = { title: '', html: '' };
+    if (p) {
+      v[sourceLang] = { title: p.title || '', html: p.html || '' };
+      for (const l of LANGS) {
+        if (l === sourceLang) continue;
+        const tr = translationOf(p.id, l);
+        if (tr) v[l] = { title: tr.title || '', html: tr.html || '' };
+      }
+    }
+    formState = { v, tab: sourceLang, field: null, form };
+    openTab(sourceLang);
+  }
+  function saveTab() {
+    const s = formState;
+    if (!s?.field) return;
+    s.v[s.tab] = { title: s.form.elements.title.value.trim(), html: s.field.get() };
+  }
+  function openTab(l) {
+    const s = formState;
+    saveTab();
+    s.tab = l;
+    s.form.elements.title.value = s.v[l].title;
+    s.field = RichEdit.field(s.form.querySelector('.poem-edit__body'), s.v[l].html, { lines: true });
+    s.form.querySelector('.text-edit__tabs').innerHTML = LANGS.map((x) => {
+      const kind = x === sourceLang ? t('texts.tabOriginal', 'оригинал') : t('texts.tabTranslation', 'перевод');
+      const filled = s.v[x].title || RichEdit.plain(s.v[x].html).trim() ? ' is-filled' : '';
+      return `<button type="button" role="tab" class="text-edit__tab${x === l ? ' is-active' : ''}${filled}" data-tab="${x}" aria-selected="${x === l}">${x.toUpperCase()} <small>${escapeHtml(kind)}</small></button>`;
+    }).join('');
+  }
+
   // ---------- Actions ----------
 
   poemsHost.addEventListener('click', async (e) => {
+    const tabBtn = e.target.closest('[data-tab]');
+    if (tabBtn && formState) { openTab(tabBtn.dataset.tab); return; }
     const btn = e.target.closest('[data-act]');
     if (!btn) return;
     const act = btn.dataset.act;
@@ -442,7 +512,7 @@
       render();
       const form = poemsHost.querySelector('.poem-edit');
       form?.closest('.poem').scrollIntoView({ block: 'start' });
-      form?.querySelector('textarea').focus({ preventScroll: true });
+      form?.querySelector('.rich__area')?.focus({ preventScroll: true });
     } else if (act === 'cancel') {
       const id = editing;
       editing = null;
@@ -463,6 +533,13 @@
     }
   });
 
+  poemsHost.addEventListener('change', (e) => {
+    if (!e.target.matches('[data-act="only-mine"]')) return;
+    onlyMine = e.target.checked;
+    try { localStorage.setItem(ONLY_KEY, onlyMine ? '1' : '0'); } catch (err) { /* storage blocked */ }
+    render();
+  });
+
   poemsHost.addEventListener('submit', async (e) => {
     const form = e.target.closest('.poem-edit');
     if (!form) return;
@@ -470,11 +547,23 @@
 
     // form.elements, not form.title: a form has its own `title` property
     const f = form.elements;
-    const title = f.title.value.trim();
+    saveTab();
+    const orig = formState.v[sourceLang];
+    const title = orig.title;
     const date = f.date.value.trim();
-    const body = f.body.value.replace(/\r\n/g, '\n').replace(/\s+$/, '');
+    const body = orig.html.replace(/\s+$/, '');
     const tags = parseTags(f.tags.value);
-    if (!title) return showError(form, t('poems.needTitle'));
+    // translations: only the languages that have something in them
+    const tr = {};
+    for (const l of LANGS) {
+      if (l === sourceLang) continue;
+      const x = formState.v[l];
+      if (x.title || RichEdit.plain(x.html).trim()) tr[l] = { title: x.title, body: x.html.replace(/\s+$/, '') };
+    }
+    if (!title) {
+      if (formState.tab !== sourceLang) openTab(sourceLang);
+      return showError(form, t('poems.needTitle'));
+    }
     if (date && !/^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?$/.test(date)) return showError(form, t('poems.badDate'));
 
     // A new poem gets its id once, from the first date and title; it never changes later
@@ -483,13 +572,14 @@
     setBusy(form, true);
     const { data, error } = await db
       .from('poem_edits')
-      .upsert({ catalog: cat, poem_id: id, title, date, body, tags })
-      .select('poem_id, title, date, body, tags, updated_at')
+      .upsert({ catalog: cat, poem_id: id, title, date, body, tags, tr })
+      .select('*')
       .single();
     if (error) return showError(form, t('poems.saveFailed') + error.message);
 
     edits.set(id, data);
     editing = null;
+    formState = null;
     render();
     document.getElementById(id)?.scrollIntoView({ block: 'start' });
   });
@@ -615,7 +705,7 @@
         const shown = showingOriginal ? p : p.tr;
         const article = btn.closest('.poem');
         article.querySelector('.poem__title').textContent = shown.title || '';
-        article.querySelector('.poem__text').textContent = shown.text || '';
+        article.querySelector('.poem__text').innerHTML = RichEdit.sanitize(shown.html || '');
         if (showingOriginal) article.removeAttribute('lang'); else article.setAttribute('lang', lang);
         btn.textContent = t(showingOriginal ? 'poems.showTranslation' : 'poems.showOriginal');
       });
