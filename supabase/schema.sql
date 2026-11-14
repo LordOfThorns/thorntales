@@ -362,6 +362,51 @@ create policy "poem edits by tag access" on public.poem_edits
 
 
 -- =========================================================
+-- Texts (stories, tales, chatter, ...) edited or added on the site by the admin.
+-- One row = the whole text as it should be shown now, with its translations:
+--   text_id found in data/texts/<section>.json -> replaces that text;
+--   text_id not in the file                    -> a new text in that section;
+--   deleted = true                             -> the text is hidden.
+-- tr = { "en": { "title": "...", "body": "<p>...</p>" }, "de": { ... } }
+-- Deleting a row brings back the text from the file.
+-- =========================================================
+
+create table if not exists public.text_edits (
+  section    text not null check (char_length(section) between 1 and 80),
+  text_id    text not null check (char_length(text_id) between 1 and 100),
+  title      text not null check (char_length(title) between 1 and 300),
+  date       text not null default '' check (char_length(date) <= 40),
+  lang       text not null default 'ru' check (lang in ('ru', 'en', 'de')),
+  body       text not null default '' check (char_length(body) <= 400000),
+  tr         jsonb not null default '{}'::jsonb,
+  deleted    boolean not null default false,
+  updated_at timestamptz not null default now(),
+  primary key (section, text_id)
+);
+
+alter table public.text_edits enable row level security;
+
+drop trigger if exists text_edits_touch on public.text_edits;
+create trigger text_edits_touch
+  before update on public.text_edits
+  for each row execute function public.touch_comment();
+
+drop policy if exists "text edits are public" on public.text_edits;
+create policy "text edits are public" on public.text_edits
+  for select using (true);
+
+drop policy if exists "admin writes text edits" on public.text_edits;
+create policy "admin writes text edits" on public.text_edits
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+revoke insert, update, delete on public.text_edits from anon, authenticated;
+grant select on public.text_edits to anon, authenticated;
+grant insert, update, delete on public.text_edits to authenticated;
+
+
+-- =========================================================
 -- Make yourself admin (can delete any comment).
 -- Put your login email below and run just this statement.
 -- =========================================================

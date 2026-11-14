@@ -2489,3 +2489,221 @@ textarea.input{
 @media (prefers-reduced-motion: reduce){
   .poetry-card{ transition: none; }
 }
+
+
+/* =====================================================
+   КНИГА ТЕКСТОВ: список, текст, редактор (texts-read.js)
+   ===================================================== */
+
+.text-book{ margin: 18px 0 0; max-width: 820px; }
+
+.text-note{ color: var(--muted); }
+
+.text-admin{ margin: 0 0 16px; }
+
+.text-list{
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.text-list__item a{
+  display: grid;
+  grid-template-columns: 7.5em minmax(0, 1fr) auto;
+  gap: 4px 16px;
+  align-items: baseline;
+  padding: 12px 16px;
+  border-radius: 12px;
+  text-decoration: none;
+  color: var(--ink);
+  border: 1px solid transparent;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.text-list__item a:hover,
+.text-list__item a:focus-visible{
+  background: rgba(255, 255, 255, .05);
+  border-color: rgba(255, 255, 255, .1);
+  outline: none;
+}
+
+.text-list__date{ color: var(--faint); font-size: 14px; font-variant-numeric: tabular-nums; }
+.text-list__title{ font-size: 18px; font-weight: 600; }
+.text-list__lang{
+  font-size: 11px;
+  letter-spacing: .8px;
+  color: var(--faint);
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.text-list__item.is-deleted a{ opacity: .45; }
+
+@media (max-width: 520px){
+  .text-list__item a{ grid-template-columns: minmax(0, 1fr) auto; }
+  .text-list__date{ grid-column: 1 / -1; }
+}
+
+.text-meta{ color: var(--faint); font-size: 14px; margin-right: 8px; }
+
+/* сам текст: удобное чтение */
+.text-body{
+  max-width: 720px;
+  margin: 8px 0 30px;
+  font-size: 17px;
+  line-height: 1.75;
+  color: rgba(233, 231, 255, .92);
+  overflow-wrap: break-word;
+}
+.text-body p{ margin: 0 0 1em; }
+.text-body p.c{ text-align: center; }
+.text-body blockquote{
+  margin: 0 0 1.2em;
+  padding: 10px 16px;
+  border-left: 2px solid rgba(170, 150, 255, .4);
+  color: var(--muted);
+  background: rgba(255, 255, 255, .03);
+  border-radius: 0 10px 10px 0;
+}
+.text-body blockquote p:last-child{ margin-bottom: 0; }
+.text-body hr{
+  border: 0;
+  height: 1px;
+  margin: 2em auto;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.3), transparent);
+}
+.text-body a{ color: #c9bfff; }
+.text-body h3, .text-body h4{ margin: 1.4em 0 .6em; }
+
+.text-comments{ max-width: 720px; margin: 0 0 24px; }
+
+/* редактор */
+.text-edit{ display: grid; gap: 14px; max-width: 820px; }
+.text-edit__row{ display: flex; flex-wrap: wrap; gap: 12px; }
+.text-edit__row .field{ min-width: 140px; }
+
+.text-edit__tabs{ display: flex; flex-wrap: wrap; gap: 6px; }
+.text-edit__tab{
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.text-edit__tab small{ font-weight: 400; color: var(--faint); margin-left: 4px; }
+.text-edit__tab.is-filled{ color: var(--ink); }
+.text-edit__tab.is-active{
+  color: var(--ink);
+  background: rgba(140, 120, 255, .28);
+  border-color: rgba(160, 140, 255, .55);
+}
+
+.rich{ display: grid; gap: 6px; }
+.rich__bar{ display: flex; align-items: center; gap: 6px; }
+.rich__btn{
+  min-width: 34px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  background: rgba(255, 255, 255, .05);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.rich__btn:hover{ background: rgba(255, 255, 255, .1); }
+.rich__btn:disabled{ opacity: .4; cursor: default; }
+.rich__btn--wide{ font-size: 12px; letter-spacing: .6px; }
+.rich__btn[aria-pressed="true"]{ background: rgba(140, 120, 255, .3); border-color: rgba(160, 140, 255, .55); }
+.rich__sep{ width: 1px; height: 20px; background: rgba(255, 255, 255, .15); margin: 0 4px; }
+
+.rich__area{
+  min-height: 260px;
+  max-height: 70vh;
+  overflow: auto;
+  font-size: 16px;
+  line-height: 1.7;
+}
+.rich__area p{ margin: 0 0 .8em; }
+.rich__area p.c{ text-align: center; }
+.rich__area blockquote{ margin: 0 0 .8em; padding-left: 12px; border-left: 2px solid rgba(170, 150, 255, .4); color: var(--muted); }
+.rich__area:focus{ outline: none; }
+
+.rich__source{
+  min-height: 260px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* языки текста: в списке — все, на каких он есть; на странице — переключатель */
+.text-list__langs{ display: inline-flex; gap: 4px; }
+
+.text-langs{ display: inline-flex; gap: 4px; vertical-align: middle; margin-right: 6px; }
+.text-langs__btn{
+  padding: 1px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: .6px;
+  cursor: pointer;
+}
+.text-langs__btn sup{ font-size: 9px; margin-left: 1px; color: var(--faint); }
+.text-langs__btn:hover{ color: var(--ink); border-color: rgba(140, 120, 255, .5); }
+.text-langs__btn[aria-pressed="true"]{
+  color: var(--ink);
+  background: rgba(140, 120, 255, .28);
+  border-color: rgba(160, 140, 255, .55);
+}
+
+/* язык оригинала подписан: «RU · ориг.» в списке, «RU · оригинал» на странице текста */
+.text-list__lang--orig{
+  color: var(--muted);
+  border-color: rgba(200, 185, 140, .4);
+  background: rgba(200, 185, 140, .07);
+}
+.text-langs__orig{ font-size: 11px; letter-spacing: .2px; color: var(--faint); text-transform: none; }
+.text-langs__btn[aria-pressed="true"] .text-langs__orig{ color: var(--muted); }
+
+/* языки в списке текстов: тихий текст в колонке одной ширины, без плашек */
+.text-list__item a{ grid-template-columns: 7.5em minmax(0, 1fr) 7.5em; }
+.text-list__langs{
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+.text-list__lang,
+.text-list__lang--orig{
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--faint);
+}
+.text-list__lang--orig{ color: rgba(214, 196, 150, .85); }
+.text-list__lang small{
+  margin-left: 4px;
+  font-size: 10px;
+  letter-spacing: .3px;
+  color: rgba(214, 196, 150, .6);
+}
+.text-list__sep{ color: rgba(255, 255, 255, .2); }
+
+@media (max-width: 520px){
+  .text-list__item a{ grid-template-columns: minmax(0, 1fr); }
+  .text-list__langs:empty{ display: none; }
+}

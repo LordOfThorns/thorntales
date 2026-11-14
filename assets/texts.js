@@ -715,15 +715,9 @@
     });
   }
 
-  // A section page: for now just its name and a note that it is empty
+  // A book page (its list of texts, or one text) is drawn by texts-read.js
   function showSection(s) {
-    document.title = `${s.label} · Thorntales`;
-    const h1 = document.querySelector('.top h1');
-    const sub = document.querySelector('.top .sub');
-    if (h1) h1.textContent = s.label;
-    if (sub) sub.textContent = t('texts.empty', 'Эта книга пока пустая.');
-    if (window.Layout) Layout.setCrumbs([{ label: s.label }]);
-    host.outerHTML = `<p class="texts-back"><a href="/texts.html">${escapeHtml(t('texts.back', '← к стопкам книг'))}</a></p>`;
+    if (window.TextBooks) TextBooks.show(s, new URLSearchParams(location.search).get('t'));
   }
 
   function escapeHtml(s) {
