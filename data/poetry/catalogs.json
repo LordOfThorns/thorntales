@@ -2,6 +2,12 @@
   "title": "Стихи",
   "catalogs": [
     {
+      "id": "no-title-2026",
+      "label": "Названия пока нет (2026)",
+      "desc": "2026 год.",
+      "href": "./poems.html?cat=no-title-2026"
+    },
+    {
       "id": "softness-and-sharpness",
       "label": "Мягкость и резкость",
       "desc": "2025 год.",
