@@ -416,3 +416,65 @@ grant insert, update, delete on public.text_edits to authenticated;
 -- =========================================================
 -- update public.profiles set is_admin = true
 -- where id = (select id from auth.users where email = 'YOUR_EMAIL_HERE');
+
+
+-- =========================================================
+-- Site pictures the admin can replace on the site (e.g. the stained-glass windows on
+-- the home page). key = 'window:<page>' (window:poetry, window:texts, ...);
+-- no row = the picture from assets/img is used.
+-- =========================================================
+
+create table if not exists public.site_images (
+  key        text primary key check (char_length(key) between 1 and 80),
+  url        text not null check (char_length(url) <= 500),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.site_images enable row level security;
+
+drop trigger if exists site_images_touch on public.site_images;
+create trigger site_images_touch
+  before update on public.site_images
+  for each row execute function public.touch_comment();
+
+drop policy if exists "site images are public" on public.site_images;
+create policy "site images are public" on public.site_images
+  for select using (true);
+
+drop policy if exists "admin writes site images" on public.site_images;
+create policy "admin writes site images" on public.site_images
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+revoke insert, update, delete on public.site_images from anon, authenticated;
+grant select on public.site_images to anon, authenticated;
+grant insert, update, delete on public.site_images to authenticated;
+
+-- The pictures themselves: public bucket, only the admin uploads
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('site-images', 'site-images', true, 3145728, array['image/jpeg', 'image/png', 'image/webp'])
+on conflict (id) do update
+  set public = excluded.public,
+      file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "site images admin insert" on storage.objects;
+create policy "site images admin insert" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'site-images' and public.is_admin());
+
+drop policy if exists "site images admin update" on storage.objects;
+create policy "site images admin update" on storage.objects
+  for update to authenticated
+  using (bucket_id = 'site-images' and public.is_admin());
+
+drop policy if exists "site images admin delete" on storage.objects;
+create policy "site images admin delete" on storage.objects
+  for delete to authenticated
+  using (bucket_id = 'site-images' and public.is_admin());
+
+drop policy if exists "site images admin list" on storage.objects;
+create policy "site images admin list" on storage.objects
+  for select to authenticated
+  using (bucket_id = 'site-images' and public.is_admin());

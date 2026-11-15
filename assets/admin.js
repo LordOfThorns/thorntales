@@ -65,6 +65,10 @@
     for (const name of ['poem_edits', 'catalog_edits', 'text_edits', 'tag_access', 'tag_readers', 'comments', 'profiles']) {
       tables[name] = await selectAll(name);
     }
+    // newer tables: a missing one (SQL not run yet) does not stop the backup
+    for (const name of ['site_images']) {
+      try { tables[name] = await selectAll(name); } catch (e) { log(`${name}: ${e.message}`); }
+    }
     const restricted = new Set(tables.tag_access.filter((r) => r.mode !== 'public').map((r) => r.tag));
     const isHidden = (tags) => (tags || []).some((tag) => restricted.has(tag));
 
@@ -167,6 +171,14 @@
       if (pub.length) add(`site/data/texts/${s}.json`, JSON.stringify({ texts: pub }, null, 2) + '\n');
     }
 
+    // ----- pictures replaced on the site (home page windows, ...) -----
+    for (const r of tables.site_images || []) {
+      const img = await fetchBytes(r.url);
+      if (!img) continue;
+      const ext = (r.url.match(/\.(webp|png|jpe?g)(\?|$)/i) || [0, 'webp'])[1].toLowerCase();
+      add(`full/site-images/${r.key.replace(/[^a-z0-9_-]+/gi, '-')}.${ext}`, img);
+    }
+
     // ----- raw tables -----
     for (const [name, rows] of Object.entries(tables)) {
       add(`full/supabase/${name}.json`, JSON.stringify(rows, null, 2) + '\n');
@@ -232,7 +244,8 @@
       '',
       'site/  - the public data folder with all site edits applied, without hidden poems',
       '         and hidden texts. tools/apply-backup.cmd copies it over data/ in the repository.',
-      'full/  - everything: the same files with hidden poems and texts, and every Supabase',
+      'full/  - everything: the same files with hidden poems and texts, pictures replaced on the',
+      '         site (full/site-images) and every Supabase',
       '         table as JSON (full/supabase). Keep it private.',
       '',
     ].join('\n');
