@@ -248,6 +248,30 @@
   renderCrumbs();
   buildBackToTop();
 
+  // ---------- Fetching data files ----------
+  //
+  // GitHub Pages now and then answers 503 (or the network hiccups) for a moment; a reload
+  // helps. So: on a server error or a network error ask again, up to 3 times with a short
+  // pause. 404 means "no such file":
+  //   SiteFetch.get(url)                      -> Response, throws if missing or failing
+  //   SiteFetch.get(url, { missingOk: true }) -> null if 404, throws if still failing
+  //   SiteFetch.get(url, { optional: true })  -> null on any failure (e.g. a translation file)
+  async function siteGet(url, opts = {}) {
+    for (let attempt = 1; ; attempt++) {
+      let res = null;
+      try { res = await fetch(url, { cache: 'no-store' }); } catch (e) { res = null; }
+      if (res && res.ok) return res;
+      if (res && res.status === 404) {
+        if (opts.missingOk || opts.optional) return null;
+        throw new Error(`${url}: 404`);
+      }
+      if (attempt < 3) { await new Promise((r) => setTimeout(r, 350 * attempt)); continue; }
+      if (opts.optional) return null;
+      throw new Error(`${url}: ${res ? res.status : 'network error'}`);
+    }
+  }
+  window.SiteFetch = { get: siteGet };
+
   window.Layout = {
     site: SITE,
     setCrumbs(list) {

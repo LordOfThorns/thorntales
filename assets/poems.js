@@ -118,13 +118,10 @@
   // ---------- Data ----------
 
   // required=false: a missing file (404) returns null instead of throwing
+  // (translation files are optional: any failure there must not break the page)
   async function fetchText(url, required) {
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) {
-      if (!required && res.status === 404) return null;
-      throw new Error(`${url}: ${res.status}`);
-    }
-    return res.text();
+    const res = await SiteFetch.get(url, { optional: !required });
+    return res ? res.text() : null;
   }
 
   // Site edits never break the page: without them the file is shown as is

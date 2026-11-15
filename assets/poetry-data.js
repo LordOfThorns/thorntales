@@ -15,10 +15,7 @@
 
   async function catalogs() {
     const [json, rows] = await Promise.all([
-      fetch('./data/poetry/catalogs.json', { cache: 'no-store' }).then((r) => {
-        if (!r.ok) throw new Error(`catalogs.json: ${r.status}`);
-        return r.json();
-      }),
+      SiteFetch.get('./data/poetry/catalogs.json').then((r) => r.json()),
       select('catalog_edits', 'catalog, label, descr, image_url'),
     ]);
     const edits = new Map(rows.map((r) => [r.catalog, r]));

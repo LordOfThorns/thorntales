@@ -37,8 +37,9 @@
 
   async function load(section) {
     const [file, rows] = await Promise.all([
-      fetch(`./data/texts/${encodeURIComponent(section)}.json`, { cache: 'no-store' })
-        .then((r) => (r.ok ? r.json() : { texts: [] })).catch(() => ({ texts: [] })),
+      // a missing file is an empty book; a server error is retried and then shown
+      SiteFetch.get(`./data/texts/${encodeURIComponent(section)}.json`, { missingOk: true })
+        .then((r) => (r ? r.json() : { texts: [] })),
       db ? db.from('text_edits').select('*').eq('section', section)
         .then(({ data, error }) => { if (error) console.warn('text edits failed', error); return data || []; })
         : Promise.resolve([]),
@@ -92,7 +93,12 @@
     root.removeAttribute('style');
     root.innerHTML = `<p class="sub">${esc(t('account.loading', 'Загрузка…'))}</p>`;
     document.title = `${section.label} · Thorntales`;
-    texts = await load(section.id);
+    try {
+      texts = await load(section.id);
+    } catch (e) {
+      root.innerHTML = `<p class="sub">${esc(t('poems.loadFailed', 'Не загрузилось'))}: ${esc(e.message || e)}</p>`;
+      return;
+    }
     isAdmin = !!(window.Auth && Auth.profile?.is_admin);
     route(textId);
     if (window.Auth) {

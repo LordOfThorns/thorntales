@@ -49,9 +49,9 @@
 
     // Which tagged poems also sit in a public txt file
     await Promise.all([...new Set(poems.map(x => x.catalog))].map(async (cat) => {
-      const res = await fetch(`./data/poetry/${encodeURIComponent(cat)}.txt`);
+      const res = await SiteFetch.get(`./data/poetry/${encodeURIComponent(cat)}.txt`, { optional: true });
       const ids = new Set();
-      if (res.ok) for (const m of (await res.text()).matchAll(/^id:\s*(.+)$/gm)) ids.add(m[1].trim());
+      if (res) for (const m of (await res.text()).matchAll(/^id:\s*(.+)$/gm)) ids.add(m[1].trim());
       fileIds.set(cat, ids);
     }));
   } catch (e) {

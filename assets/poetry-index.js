@@ -49,8 +49,8 @@
   const hiddenP = PoetryData.hiddenPoems();
   await Promise.all(catalogs.map(async (c) => {
     try {
-      const res = await fetch(`./data/poetry/${encodeURIComponent(c.id)}.txt`);
-      if (!res.ok) return;
+      const res = await SiteFetch.get(`./data/poetry/${encodeURIComponent(c.id)}.txt`, { optional: true });
+      if (!res) return;
       const ids = [];
       for (const block of (await res.text()).replace(/\r\n/g, '\n').split('=== poem ===\n').slice(1)) {
         const m = block.match(/^id:\s*(.+)$/m);

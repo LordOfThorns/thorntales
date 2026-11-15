@@ -314,15 +314,16 @@
     }
   }
 
+  // A file that still fails after the retries is skipped: search the rest
   async function fetchText(url) {
-    const r = await fetch(url, { cache: 'no-store' });
-    return r.ok ? r.text() : null;
+    const r = await SiteFetch.get(url, { optional: true });
+    return r ? r.text() : null;
   }
 
   async function fetchJson(url) {
     try {
-      const r = await fetch(url, { cache: 'no-store' });
-      return r.ok ? await r.json() : null;
+      const r = await SiteFetch.get(url, { optional: true });
+      return r ? await r.json() : null;
     } catch (e) {
       return null;
     }
