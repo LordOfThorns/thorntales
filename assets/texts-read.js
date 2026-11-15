@@ -59,7 +59,8 @@
       byId.set(r.text_id, { ...fromRow(r), inFile: !!had?.inFile, added: !had });
     }
     const all = [...byId.values()];
-    all.sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.title.localeCompare(b.title));
+    // newest first; texts of one day by title
+    all.sort((a, b) => (b.date || '').localeCompare(a.date || '') || a.title.localeCompare(b.title));
     return all;
   }
 

@@ -4,6 +4,7 @@
      PoetryData.catalogs()        // catalogs.json with site edits (catalog_edits) applied
      PoetryData.hiddenPoems()     // Map catalog -> Set of poem ids the reader may not see
      PoetryData.restrictedTags()  // admin only: Map tag -> mode, for tags that are not public
+     PoetryData.parseTxt(raw)     // collection txt -> [{ meta, text }] in file order
      PoetryData.descToText(desc)  // "a<br>b" -> "a\nb" (for the editor)
      PoetryData.uploadCatalogImage(cat, file) -> public url
 */
@@ -67,6 +68,27 @@
     return data || [];
   }
 
+  // A collection txt file -> [{ meta: { date, title, id, tags, format, ... }, text }] in file order.
+  // Blocks start with "=== poem ==="; header lines ("key: value") go until the first empty line.
+  function parseTxt(raw) {
+    const text = String(raw || '').replace(/\r\n/g, '\n');
+    let blocks = text.split('\n=== poem ===\n');
+    if (text.startsWith('=== poem ===')) blocks = text.split('=== poem ===\n').slice(1);
+    const list = [];
+    for (const blockRaw of blocks) {
+      const block = blockRaw.trim();
+      if (!block) continue;
+      const parts = block.split('\n\n');
+      const meta = {};
+      for (const line of (parts[0] || '').split('\n')) {
+        const m = line.match(/^([a-zA-Z0-9_-]+)\s*:\s*(.*)$/);
+        if (m) meta[m[1].toLowerCase()] = m[2].trim();
+      }
+      list.push({ meta, text: parts.slice(1).join('\n\n') || '' });
+    }
+    return list;
+  }
+
   function descToText(desc) {
     return String(desc || '').replace(/<br\s*\/?>/gi, '\n');
   }
@@ -107,5 +129,5 @@
   }
 
 
-  window.PoetryData = { catalogs, hiddenPoems, restrictedTags, descToText, uploadCatalogImage, removeCatalogImages };
+  window.PoetryData = { catalogs, hiddenPoems, restrictedTags, parseTxt, descToText, uploadCatalogImage, removeCatalogImages };
 })();

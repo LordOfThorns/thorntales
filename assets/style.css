@@ -1248,6 +1248,7 @@ textarea.input{
 }
 
 .account[hidden]{ display: none; }
+.btn[hidden]{ display: none; }
 .account .form{ max-width: none; }
 
 .avatar-edit{
@@ -1815,6 +1816,29 @@ textarea.input{
   border-color: rgba(255, 170, 150, .45);
   background: rgba(255, 140, 120, .08);
 }
+
+/* ===== админка (admin.html) ===== */
+.admin{
+  display: grid;
+  gap: 16px;
+  max-width: 720px;
+}
+.admin[hidden]{ display: none; }
+.admin .panel{ display: grid; gap: 12px; justify-items: start; }
+.admin .panel__title{ margin: 0; }
+.admin__text{ margin: 0; font-size: 15px; line-height: 1.5; }
+.admin__text--muted{ font-size: 14px; color: var(--faint); }
+.admin__log{
+  justify-self: stretch;
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  font: 13px/1.5 ui-monospace, Consolas, monospace;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.admin__log:empty{ display: none; }
 
 .tags-page{
   display: grid;

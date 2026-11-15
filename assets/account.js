@@ -24,6 +24,7 @@
     }
     root.hidden = false;
     sub.textContent = user.email + (profile?.is_admin ? ' · ' + t('account.moderator') : '');
+    document.getElementById('adminLink').hidden = !profile?.is_admin;
     preview.innerHTML = Auth.avatarHtml(profile, 'avatar--xl');
     avatarRemove.hidden = !profile?.avatar_url;
     if (document.activeElement !== nameForm.name) {

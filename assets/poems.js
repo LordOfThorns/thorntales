@@ -147,7 +147,7 @@
     const list = filePoems.map(p => {
       const e = edits.get(p.id);
       // a file poem is plain text: as HTML it is the escaped text (line breaks stay)
-      return e ? { ...fromRow(e), edited: true } : { ...p, html: escapeHtml(p.text) };
+      return e ? { ...fromRow(e), edited: true } : { ...p, html: fileHtml(p) };
     });
     for (const e of edits.values()) {
       if (!fileIds.has(e.poem_id)) list.push({ ...fromRow(e), added: true });
@@ -157,6 +157,7 @@
     let prev = '';
     const key = new Map(list.map(p => { if (p.date) prev = p.date; return [p, p.date || prev]; }));
     list.sort((a, b) => key.get(a).localeCompare(key.get(b)));
+    list.reverse(); // newest first
     if (lang !== sourceLang) {
       for (const p of list) {
         const tr = translationOf(p.id, lang);
@@ -176,7 +177,13 @@
     const e = edits.get(id)?.tr?.[l];
     if (e && RichEdit.plain(e.body).trim()) return { title: e.title || '', html: e.body };
     const f = fileTr.get(l)?.get(id);
-    return f && f.text.trim() ? { title: f.title, html: escapeHtml(f.text) } : null;
+    return f && f.text.trim() ? { title: f.title, html: fileHtml(f) } : null;
+  }
+
+  // A file poem is plain text unless its header says "format: html" (written by the
+  // admin backup, see admin.js): then the text is HTML as saved on the site
+  function fileHtml(p) {
+    return p.format === 'html' ? p.text : escapeHtml(p.text);
   }
 
   // ---------- Rendering ----------
@@ -654,43 +661,20 @@
     return safe.replace(/&lt;br\s*\/?&gt;/gi, '<br>');
   }
 
-  // Poems in file order. Header lines: date, title, id, tags (comma separated)
+  // Poems in file order. Header lines: date, title, id, tags (comma separated), format
   function parsePoemsTxt(raw) {
-    const text = raw.replace(/\r\n/g, '\n');
-
-    // Split into blocks by the marker; anything before the first marker is ignored
-    let blocks = text.split('\n=== poem ===\n');
-    if (text.startsWith('=== poem ===')) {
-      blocks = text.split('=== poem ===\n').slice(1);
-    }
-
-    const list = [];
-
-    for (const blockRaw of blocks) {
-      const block = blockRaw.trim();
-      if (!block) continue;
-
-      // Header lines ("key: value") go until the first empty line
-      const parts = block.split('\n\n');
-      const headerPart = parts[0] || '';
-      const bodyPart = parts.slice(1).join('\n\n') || '';
-
-      const meta = {};
-      for (const line of headerPart.split('\n')) {
-        const m = line.match(/^([a-zA-Z0-9_-]+)\s*:\s*(.*)$/);
-        if (!m) continue;
-        meta[m[1].toLowerCase()] = m[2].trim();
-      }
-
+    return PoetryData.parseTxt(raw).map(({ meta, text }) => {
       const title = meta.title || t('poems.untitled');
       const date = meta.date || '';
-      const id = meta.id || makeId(date, title);
-      const tags = meta.tags ? parseTags(meta.tags) : [];
-
-      list.push({ id, date, title, text: bodyPart, tags });
-    }
-
-    return list;
+      return {
+        id: meta.id || makeId(date, title),
+        date,
+        title,
+        text,
+        tags: meta.tags ? parseTags(meta.tags) : [],
+        format: meta.format === 'html' ? 'html' : '',
+      };
+    });
   }
 
   // "Original" / "Translation" switch on translated poems
