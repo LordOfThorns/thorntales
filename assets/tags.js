@@ -1,6 +1,16 @@
 /* tags.js — admin page: who sees poems with a given tag.
    Tables: tag_access (tag, mode), tag_readers (tag, user_id), see supabase/schema.sql.
    Changes are saved right away. */
+// SiteFetch.get comes from layout.js; right after a deploy the browser may still run an
+// older cached layout.js without it, so fall back to a plain fetch with the same answers.
+window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
+  ? SiteFetch.get(url, o)
+  : fetch(url, { cache: 'no-store' }).then((r) => {
+    if (r.ok) return r;
+    if (o.optional || (o.missingOk && r.status === 404)) return null;
+    throw new Error(`${url}: ${r.status}`);
+  }, (e) => { if (o.optional) return null; throw e; })));
+
 (async function () {
   'use strict';
 
@@ -49,7 +59,7 @@
 
     // Which tagged poems also sit in a public txt file
     await Promise.all([...new Set(poems.map(x => x.catalog))].map(async (cat) => {
-      const res = await SiteFetch.get(`./data/poetry/${encodeURIComponent(cat)}.txt`, { optional: true });
+      const res = await siteGet(`./data/poetry/${encodeURIComponent(cat)}.txt`, { optional: true });
       const ids = new Set();
       if (res) for (const m of (await res.text()).matchAll(/^id:\s*(.+)$/gm)) ids.add(m[1].trim());
       fileIds.set(cat, ids);

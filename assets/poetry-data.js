@@ -8,6 +8,16 @@
      PoetryData.descToText(desc)  // "a<br>b" -> "a\nb" (for the editor)
      PoetryData.uploadCatalogImage(cat, file) -> public url
 */
+// SiteFetch.get comes from layout.js; right after a deploy the browser may still run an
+// older cached layout.js without it, so fall back to a plain fetch with the same answers.
+window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
+  ? SiteFetch.get(url, o)
+  : fetch(url, { cache: 'no-store' }).then((r) => {
+    if (r.ok) return r;
+    if (o.optional || (o.missingOk && r.status === 404)) return null;
+    throw new Error(`${url}: ${r.status}`);
+  }, (e) => { if (o.optional) return null; throw e; })));
+
 (function () {
   'use strict';
 
@@ -15,7 +25,7 @@
 
   async function catalogs() {
     const [json, rows] = await Promise.all([
-      SiteFetch.get('./data/poetry/catalogs.json').then((r) => r.json()),
+      siteGet('./data/poetry/catalogs.json').then((r) => r.json()),
       select('catalog_edits', 'catalog, label, descr, image_url'),
     ]);
     const edits = new Map(rows.map((r) => [r.catalog, r]));

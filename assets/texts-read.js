@@ -13,6 +13,16 @@
 
    Used by texts.js: TextBooks.show(section, textId).
 */
+// SiteFetch.get comes from layout.js; right after a deploy the browser may still run an
+// older cached layout.js without it, so fall back to a plain fetch with the same answers.
+window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
+  ? SiteFetch.get(url, o)
+  : fetch(url, { cache: 'no-store' }).then((r) => {
+    if (r.ok) return r;
+    if (o.optional || (o.missingOk && r.status === 404)) return null;
+    throw new Error(`${url}: ${r.status}`);
+  }, (e) => { if (o.optional) return null; throw e; })));
+
 (function () {
   'use strict';
 
@@ -38,7 +48,7 @@
   async function load(section) {
     const [file, rows] = await Promise.all([
       // a missing file is an empty book; a server error is retried and then shown
-      SiteFetch.get(`./data/texts/${encodeURIComponent(section)}.json`, { missingOk: true })
+      siteGet(`./data/texts/${encodeURIComponent(section)}.json`, { missingOk: true })
         .then((r) => (r ? r.json() : { texts: [] })),
       db ? db.from('text_edits').select('*').eq('section', section)
         .then(({ data, error }) => { if (error) console.warn('text edits failed', error); return data || []; })

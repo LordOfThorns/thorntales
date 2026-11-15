@@ -8,6 +8,16 @@
    with the same id from the txt file, or adds a new poem if the file has no such id.
    Only the admin (profiles.is_admin) can write there; the editor shows only for them.
 */
+// SiteFetch.get comes from layout.js; right after a deploy the browser may still run an
+// older cached layout.js without it, so fall back to a plain fetch with the same answers.
+window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
+  ? SiteFetch.get(url, o)
+  : fetch(url, { cache: 'no-store' }).then((r) => {
+    if (r.ok) return r;
+    if (o.optional || (o.missingOk && r.status === 404)) return null;
+    throw new Error(`${url}: ${r.status}`);
+  }, (e) => { if (o.optional) return null; throw e; })));
+
 (async function () {
   const toc = document.getElementById('toc');
   const poemsHost = document.getElementById('poems');
@@ -120,7 +130,7 @@
   // required=false: a missing file (404) returns null instead of throwing
   // (translation files are optional: any failure there must not break the page)
   async function fetchText(url, required) {
-    const res = await SiteFetch.get(url, { optional: !required });
+    const res = await siteGet(url, { optional: !required });
     return res ? res.text() : null;
   }
 

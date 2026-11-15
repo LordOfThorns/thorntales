@@ -1,3 +1,13 @@
+// SiteFetch.get comes from layout.js; right after a deploy the browser may still run an
+// older cached layout.js without it, so fall back to a plain fetch with the same answers.
+window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
+  ? SiteFetch.get(url, o)
+  : fetch(url, { cache: 'no-store' }).then((r) => {
+    if (r.ok) return r;
+    if (o.optional || (o.missingOk && r.status === 404)) return null;
+    throw new Error(`${url}: ${r.status}`);
+  }, (e) => { if (o.optional) return null; throw e; })));
+
 (async function () {
   const host = document.getElementById('catalogs');
   if (!host) return;
@@ -49,7 +59,7 @@
   const hiddenP = PoetryData.hiddenPoems();
   await Promise.all(catalogs.map(async (c) => {
     try {
-      const res = await SiteFetch.get(`./data/poetry/${encodeURIComponent(c.id)}.txt`, { optional: true });
+      const res = await siteGet(`./data/poetry/${encodeURIComponent(c.id)}.txt`, { optional: true });
       if (!res) return;
       const ids = [];
       for (const block of (await res.text()).replace(/\r\n/g, '\n').split('=== poem ===\n').slice(1)) {
