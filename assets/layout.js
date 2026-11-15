@@ -21,6 +21,7 @@
     texts:      { label: 'Тексты',         href: '/texts.html',       parent: 'home', menu: true },
     poetry:     { label: 'Стихи',          href: '/poetry.html',      parent: 'home', menu: true },
     projects:   { label: 'Проекты',        href: '/projects.html',    parent: 'home', menu: true },
+    search:     { label: 'Поиск',          href: '/search.html',      parent: 'home', menu: true },
     mapGen:     { label: 'Генератор карт', href: '/terrain.html',     parent: 'projects' },
     login:      { label: 'Вход',           href: '/login.html',       parent: 'home' },
     account:    { label: 'Кабинет',        href: '/account.html',     parent: 'home' },

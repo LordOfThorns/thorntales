@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="/favicon.ico">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title data-i18n="nav.search">Поиск · Thorntales</title>
+  <link rel="stylesheet" href="/assets/style.css?v=54" />
+</head>
+<body data-page="search">
+  <main class="wrap">
+    <header class="top">
+      <h1 data-i18n="search.title">Поиск</h1>
+      <p class="sub" data-i18n="search.sub">по стихам, текстам и тегам</p>
+    </header>
+
+    <form class="search" id="searchForm" role="search" autocomplete="off">
+      <div class="search__row">
+        <input class="input search__input" type="search" name="q" id="searchInput"
+               data-i18n-attr="placeholder:search.placeholder,aria-label:search.placeholder" placeholder="слово или фраза">
+        <select class="input search__scope" name="in" id="searchScope" data-i18n-attr="aria-label:search.in">
+          <option value="all" data-i18n="search.inAll">везде</option>
+          <option value="poems" data-i18n="search.inPoems">стихи</option>
+          <option value="texts" data-i18n="search.inTexts">тексты</option>
+          <option value="polar" data-i18n="search.inPolar">Полярная Ночь</option>
+        </select>
+      </div>
+      <div class="search__tags" id="searchTags" aria-live="polite"></div>
+    </form>
+
+    <p class="search__status" id="searchStatus" data-i18n="search.loading" role="status">Загрузка…</p>
+    <ol class="search__results" id="searchResults"></ol>
+    <button class="btn btn--ghost search__more" type="button" id="searchMore" hidden data-i18n="search.more">Показать ещё</button>
+
+    <footer class="bottom">
+      <small>© 2026</small>
+    </footer>
+  </main>
+
+  <script src="/assets/i18n.js?v=17"></script>
+  <script src="/assets/layout.js?v=5"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  <script src="/assets/auth.js"></script>
+  <script src="/assets/rich-editor.js"></script>
+  <script src="/assets/poetry-data.js?v=2"></script>
+  <script src="/assets/search.js?v=2"></script>
+</body>
+</html>

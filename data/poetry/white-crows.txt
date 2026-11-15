@@ -64,6 +64,7 @@ my sole painkillers.
 === poem ===
 title: белые вороны - поэма
 id: белые-вороны-поэма
+tags: poems
 
 I
 
@@ -1029,6 +1030,7 @@ id: 2019-12-19-загадка
 date: 2019-12-22
 title: шум - поэма
 id: 2019-12-22-шум-поэма
+tags: poems
 
 I
 
