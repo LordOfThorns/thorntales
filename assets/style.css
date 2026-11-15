@@ -59,7 +59,22 @@
 
 *{ box-sizing: border-box; }
 
-html{ scroll-padding-top: calc(var(--nav-h) + 12px); }
+html{
+  scroll-padding-top: calc(var(--nav-h) + 12px);
+  /* no blue/grey box flashing over tapped elements on phones (windows, books, the spider…) */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* animated things you tap: no text selection or long-press menu on them */
+.window,
+.book,
+.spider-hang,
+.spider,
+.bubble{
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
 
 body{
   margin: 0;
