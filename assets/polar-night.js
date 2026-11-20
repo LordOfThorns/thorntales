@@ -42,6 +42,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
     v: params.get('v'),
     e: params.get('e'),
     kind: params.get('kind') === 'note' ? 'note' : 'chapter',
+    section: params.get('section') === 'old' ? 'old' : 'main', // a new volume: main or "old versions"
     edit: params.has('edit'),
     history: params.has('history'),
   };
@@ -66,7 +67,9 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
     return out;
   }
 
-  const volLabel = (vol) => t('pn.volume', { n: roman(vol.num) });
+  // "old versions of the books": early drafts, never public (see schema.sql)
+  const isOld = (vol) => vol.section === 'old';
+  const volLabel = (vol) => (isOld(vol) ? t('pn.oldLabel') : t('pn.volume', { n: roman(vol.num) }));
   const entryLabel = (x) => (x.kind === 'note' ? t('pn.note') : t('pn.chapterN', { n: x.num }));
 
   // Title / body in the reader's language when translated, else the Russian original
@@ -105,11 +108,18 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
   // Lists need titles only: bodies are fetched for the one entry that is open
   const LIST_COLS = 'id,volume_id,kind,num,title,status,updated_at,tr_en:tr->en->>title,tr_de:tr->de->>title';
 
+  // Supabase may hang when it is down: after a few seconds go on without it (the backup copy)
+  const SOFT_MS = 6000;
+  const soft = (p, what) => Promise.race([
+    Promise.resolve(p),
+    new Promise((resolve) => setTimeout(() => resolve({ data: null, error: { message: `${what}: no answer` } }), SOFT_MS)),
+  ]);
+
   async function loadLists() {
     if (db) {
       const [v, e] = await Promise.all([
-        db.from('pn_volumes').select('*').order('num'),
-        db.from('pn_entries').select(LIST_COLS).order('num'),
+        soft(db.from('pn_volumes').select('*').order('num'), 'volumes'),
+        soft(db.from('pn_entries').select(LIST_COLS).order('num'), 'entries'),
       ]);
       if (!v.error && !e.error) {
         vols = v.data;
@@ -134,7 +144,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
 
   async function loadEntry(id) {
     if (db) {
-      const { data, error } = await db.from('pn_entries').select('*').eq('id', id).maybeSingle();
+      const { data, error } = await soft(db.from('pn_entries').select('*').eq('id', id).maybeSingle(), 'entry');
       if (!error) return data;
       console.warn('entry failed', error);
     }
@@ -149,7 +159,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
   // ---------- Routing ----------
 
   async function start() {
-    if (window.Auth) await Auth.ready;
+    if (window.Auth) await soft(Auth.ready, 'auth');
     isAdmin = !!(window.Auth && Auth.profile?.is_admin);
     root.innerHTML = `<p class="text-note">${esc(t('account.loading'))}</p>`;
     try {
@@ -188,22 +198,39 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
     header(t('nav.polarNight'), esc(t('polar.kind')));
     crumbs([]);
     const shown = vols.filter((v) => isAdmin || v.status !== 'draft');
-    const cards = shown.map((v) => {
+    const card = (v) => {
       const ver = version(v, siteLang, 'descr');
       const desc = plain(ver.body).trim();
       const n = entriesOf(v.id, 'chapter').length;
       return `
-        <li><a class="pn-vol" href="${esc(url(v.id))}">
+        <li><a class="pn-vol${isOld(v) ? ' pn-vol--old' : ''}" href="${esc(url(v.id))}">
           <span class="pn-vol__num">${esc(volLabel(v))}${statusMark(v)}</span>
           <span class="pn-vol__title">${esc(ver.title)}</span>
           ${desc ? `<span class="pn-vol__desc">${esc(desc.length > 220 ? `${desc.slice(0, 220)}…` : desc)}</span>` : ''}
           <span class="pn-vol__count">${esc(t('pn.chapterCount', { n }))}</span>
         </a></li>`;
-    }).join('');
+    };
+    const main = shown.filter((v) => !isOld(v));
+    const old = shown.filter(isOld);
+    // old versions: guests only learn that the section exists (RLS gives them no rows)
+    const signedIn = !!(window.Auth && Auth.user);
+    const back = encodeURIComponent(location.pathname + location.search);
+    let oldBody;
+    if (!signedIn) oldBody = `<p class="text-note">${esc(t('pn.oldGuest'))} <a href="/login.html?next=${back}">${esc(t('pn.signIn'))}</a></p>`;
+    else if (old.length) oldBody = `<ol class="pn-vols pn-vols--old">${old.map(card).join('')}</ol>`;
+    else oldBody = `<p class="text-note">${esc(t('pn.noOld'))}</p>`;
     root.innerHTML = `
       ${note ? `<p class="text-note">${note}</p>` : ''}
       ${isAdmin ? `<div class="text-admin"><a class="btn" href="${esc(url('new'))}">${esc(t('pn.newVolume'))}</a></div>` : ''}
-      ${shown.length ? `<ol class="pn-vols">${cards}</ol>` : `<p class="text-note">${esc(t('pn.noVolumes'))}</p>`}
+      ${main.length ? `<ol class="pn-vols">${main.map(card).join('')}</ol>` : `<p class="text-note">${esc(t('pn.noVolumes'))}</p>`}
+      <section class="pn-old">
+        <div class="pn-part__head">
+          <h2 class="pn-part__title">${esc(t('pn.old'))}</h2>
+          ${isAdmin ? `<a class="btn" href="${esc(url('new', null, { section: 'old' }))}">${esc(t('pn.newOld'))}</a>` : ''}
+        </div>
+        <p class="pn-old__sub">${esc(t('pn.oldSub'))}</p>
+        ${oldBody}
+      </section>
       <section class="pn-universe">
         <h2 class="pn-universe__title">${esc(t('pn.universe'))}</h2>
         <p class="pn-universe__text">${esc(t('pn.universeStub'))}</p>
@@ -278,58 +305,340 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
             <span class="catalog-pager__hint">${esc(t('pn.next'))}</span>
             <span class="catalog-pager__label">${esc(version(next).title)}</span></a>` : '<span></span>'}
         </nav>`;
-      if (x.kind === 'chapter' && window.Comments && x.status !== 'draft') {
-        Comments.mount([{ el: document.getElementById('pnComments'), thread }], thread);
-      }
+      if (canQuote) Comments.mount([{ el: document.getElementById('pnComments'), thread }], thread);
+      marks.apply(v.lang);
     };
+    const canQuote = x.kind === 'chapter' && x.status !== 'draft' && !!(window.Comments && Comments.quote);
+    const marks = makeMarks(x);
     draw();
     document.querySelector('.top').onclick = (e) => {
       const b = e.target.closest('[data-act="lang"]');
       if (b) { shown = b.dataset.lang; draw(); }
     };
-    if (x.kind === 'chapter' && x.status !== 'draft') quoteOnSelect(thread);
+    // what a selection in the text offers: quote it into a comment; for the admin, a margin mark
+    const actions = [];
+    if (canQuote) {
+      actions.push({ label: t('pn.quote'), run: (range, text) => {
+        getSelection().removeAllRanges();
+        Comments.quote(thread, text.length > 1500 ? `${text.slice(0, 1500)}…` : text);
+      } });
+    }
+    if (isAdmin && db) actions.push({ label: t('pn.markAdd'), run: (range) => marks.add(range) });
+    selectionBar(actions);
   }
 
-  // Selecting text in a chapter shows "Quote"; it puts the text into the comment form
-  function quoteOnSelect(thread) {
-    if (!window.Comments || !Comments.quote) return;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'pn-quote';
-    btn.textContent = t('pn.quote');
-    btn.hidden = true;
-    document.body.append(btn);
-    let text = '';
+  // A small bar under a selection in the text with the given actions
+  function selectionBar(actions) {
+    if (!actions.length) return;
+    const bar = document.createElement('div');
+    bar.className = 'pn-selbar';
+    bar.hidden = true;
+    for (const a of actions) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = a.label;
+      b.addEventListener('mousedown', (e) => e.preventDefault()); // keep the selection until the click
+      b.addEventListener('click', () => {
+        const sel = getSelection();
+        if (!sel.rangeCount) return;
+        const range = sel.getRangeAt(0).cloneRange();
+        bar.hidden = true;
+        a.run(range, sel.toString().replace(/\n{3,}/g, '\n\n').trim());
+      });
+      bar.append(b);
+    }
+    document.body.append(bar);
     const place = () => {
       const sel = getSelection();
       const art = root.querySelector('.pn-text');
       if (!art || !sel || sel.isCollapsed || !sel.rangeCount
-        || !art.contains(sel.anchorNode) || !art.contains(sel.focusNode)) { btn.hidden = true; return; }
-      text = sel.toString().replace(/\n{3,}/g, '\n\n').trim();
-      if (!text) { btn.hidden = true; return; }
+        || !art.contains(sel.anchorNode) || !art.contains(sel.focusNode) || !sel.toString().trim()) { bar.hidden = true; return; }
       const r = sel.getRangeAt(0).getBoundingClientRect();
-      btn.hidden = false;
-      const top = r.bottom + 10 + btn.offsetHeight < innerHeight ? r.bottom + 10 : r.top - btn.offsetHeight - 10;
-      btn.style.top = `${Math.max(8, top)}px`;
-      btn.style.left = `${Math.min(innerWidth - btn.offsetWidth - 8, Math.max(8, r.left + r.width / 2 - btn.offsetWidth / 2))}px`;
+      bar.hidden = false;
+      const top = r.bottom + 10 + bar.offsetHeight < innerHeight ? r.bottom + 10 : r.top - bar.offsetHeight - 10;
+      bar.style.top = `${Math.max(8, top)}px`;
+      bar.style.left = `${Math.min(innerWidth - bar.offsetWidth - 8, Math.max(8, r.left + r.width / 2 - bar.offsetWidth / 2))}px`;
     };
     let timer = 0;
     document.addEventListener('selectionchange', () => { clearTimeout(timer); timer = setTimeout(place, 120); });
-    addEventListener('scroll', () => { btn.hidden = true; }, { passive: true });
-    btn.addEventListener('mousedown', (e) => e.preventDefault()); // keep the selection until the click
-    btn.addEventListener('click', () => {
-      btn.hidden = true;
-      getSelection().removeAllRanges();
-      Comments.quote(thread, text.length > 1500 ? `${text.slice(0, 1500)}…` : text);
+    addEventListener('scroll', () => { bar.hidden = true; }, { passive: true });
+  }
+
+  // ---------- Margin marks: the author's notes on a fragment of the text ----------
+  // Table pn_marks. A mark is found again by its fragment (quote) plus a little text
+  // before and after it, in the language version it was made in; one whose fragment is
+  // gone after an edit is listed under the text for the admin ("its place changed").
+  // The icon is a CSS ::after, so marks never change the text the offsets are counted in.
+
+  const CONTEXT = 48;
+
+  function makeMarks(x) {
+    let list = [];
+    let lang = ORIG;
+    let pop = null;       // the open popup
+    let pinned = false;   // opened by a click (stays) or by hovering (closes on leave)
+    let hoverTimer = 0;
+    const load = async () => {
+      if (!db) return;
+      const { data, error } = await soft(db.from('pn_marks').select('*').eq('entry_id', x.id).order('created_at'), 'marks');
+      if (error) { console.warn('marks failed', error); return; } // no table yet: no marks
+      list = data || [];
+    };
+    let loaded = load();
+    const art = () => root.querySelector('.pn-text');
+    const byId = (id) => list.find((m) => String(m.id) === String(id));
+
+    // offset of a point (node, offset) in the text of the article
+    function indexOf(a, node, offset) {
+      const r = document.createRange();
+      r.setStart(a, 0);
+      r.setEnd(node, offset);
+      return r.toString().length;
+    }
+
+    // where the fragment is now: every occurrence, the best fitting context wins
+    function locate(S, m) {
+      let best = -1;
+      let bestScore = -1;
+      for (let at = S.indexOf(m.quote); at >= 0; at = S.indexOf(m.quote, at + 1)) {
+        let score = 0;
+        for (let k = 1; k <= m.prefix.length && S[at - k] === m.prefix[m.prefix.length - k]; k++) score++;
+        const end = at + m.quote.length;
+        for (let k = 0; k < m.suffix.length && S[end + k] === m.suffix[k]; k++) score++;
+        if (score > bestScore) { best = at; bestScore = score; }
+      }
+      return best;
+    }
+
+    // wrap text [start, end) in highlighted spans (one per text node it crosses)
+    function wrap(a, start, end, m) {
+      const walker = document.createTreeWalker(a, NodeFilter.SHOW_TEXT);
+      const parts = [];
+      let pos = 0;
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const len = n.data.length;
+        const s = Math.max(start, pos);
+        const e = Math.min(end, pos + len);
+        if (s < e) parts.push([n, s - pos, e - pos]);
+        pos += len;
+        if (pos >= end) break;
+      }
+      parts.forEach(([n, s, e], i) => {
+        let mid = n;
+        if (e < mid.data.length) mid.splitText(e);
+        if (s > 0) mid = mid.splitText(s);
+        const span = document.createElement('span');
+        span.className = `pn-mark pn-mark--${m.status}${i === parts.length - 1 ? ' pn-mark--end' : ''}`;
+        span.dataset.mark = m.id;
+        if (i === parts.length - 1) {
+          span.tabIndex = 0;
+          span.setAttribute('role', 'button');
+          span.setAttribute('aria-label', t('pn.markTitle'));
+        }
+        mid.replaceWith(span);
+        span.append(mid);
+      });
+    }
+
+    function render() {
+      const a = art();
+      if (!a) return;
+      close();
+      a.querySelectorAll('.pn-mark').forEach((s) => s.replaceWith(...s.childNodes));
+      a.normalize();
+      const S = a.textContent;
+      const found = [];
+      const lost = [];
+      for (const m of list.filter((y) => y.lang === lang)) {
+        const at = locate(S, m);
+        if (at < 0) lost.push(m); else found.push([at, m]);
+      }
+      for (const [at, m] of found) wrap(a, at, at + m.quote.length, m);
+      renderLost(lost);
+    }
+
+    function renderLost(lost) {
+      root.querySelector('.pn-lost')?.remove();
+      if (!isAdmin || !lost.length) return;
+      const box = document.createElement('section');
+      box.className = 'pn-lost';
+      box.innerHTML = `<h3 class="pn-lost__title">${esc(t('pn.marksLost'))}</h3>
+        <ul class="pn-lost__list">${lost.map((m) => `
+          <li class="pn-lost__item" data-mark="${m.id}">
+            <blockquote class="comment__quote">${esc(m.quote)}</blockquote>
+            <p class="pn-lost__note">${esc(m.note)}</p>
+          </li>`).join('')}</ul>`;
+      art().after(box);
+    }
+
+    // ----- the popup -----
+    function close() {
+      clearTimeout(hoverTimer);
+      pop?.remove();
+      pop = null;
+      pinned = false;
+    }
+    function placeAt(el, rect) {
+      const w = Math.min(340, innerWidth - 16);
+      el.style.width = `${w}px`;
+      el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, rect.left)) + scrollX}px`;
+      el.style.top = `${rect.bottom + 8 + scrollY}px`;
+    }
+    const stamp = (iso) => new Date(iso).toLocaleDateString(window.I18n ? I18n.locale : 'ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+
+    function show(m, anchor, byClick) {
+      close();
+      pinned = byClick;
+      pop = document.createElement('div');
+      pop.className = 'pn-pop';
+      pop.setAttribute('role', 'dialog');
+      pop.innerHTML = `
+        <div class="pn-pop__head"><span class="pn-pop__title">${esc(t('pn.markTitle'))}</span>${isAdmin ? markWho(m.status) : ''}</div>
+        <div class="pn-pop__note">${esc(m.note)}</div>
+        <div class="pn-pop__foot">
+          <time datetime="${esc(m.created_at)}">${esc(stamp(m.created_at))}</time>
+          ${isAdmin ? `<span class="pn-pop__acts">
+            <button class="link-btn" type="button" data-act="edit">${esc(t('pn.markEdit'))}</button>
+          </span>` : ''}
+        </div>`;
+      document.body.append(pop);
+      placeAt(pop, anchor.getBoundingClientRect());
+      pop.addEventListener('mouseenter', () => clearTimeout(hoverTimer));
+      pop.addEventListener('mouseleave', () => { if (!pinned) hoverTimer = setTimeout(close, 300); });
+      pop.querySelector('[data-act="edit"]')?.addEventListener('click', () => form(m, anchor.getBoundingClientRect()));
+    }
+    const markWho = (s) => `<span class="pn-status pn-status--${s === 'draft' ? 'draft' : 'members'}">${esc(t(s === 'draft' ? 'pn.markOnlyMe' : 'pn.members'))}</span>`;
+
+    // the form: a new mark (with its fragment) or an existing one
+    function form(m, rect, fresh) {
+      close();
+      pinned = true;
+      pop = document.createElement('form');
+      pop.className = 'pn-pop pn-pop--form';
+      const st = m?.status || 'draft';
+      pop.innerHTML = `
+        <div class="pn-pop__head"><span class="pn-pop__title">${esc(t('pn.markTitle'))}</span></div>
+        <blockquote class="comment__quote pn-pop__quote">${esc((m || fresh).quote.length > 300 ? `${(m || fresh).quote.slice(0, 300)}…` : (m || fresh).quote)}</blockquote>
+        <textarea class="input pn-pop__text" name="note" rows="4" maxlength="8000" required placeholder="${esc(t('pn.markPh'))}"></textarea>
+        <div class="pn-pop__who">
+          ${['draft', 'members'].map((s) => `<label class="pn-edit__opt"><input type="radio" name="status" value="${s}"${s === st ? ' checked' : ''}>
+            <span>${esc(t(s === 'draft' ? 'pn.markOnlyMe' : 'pn.status.members'))}</span></label>`).join('')}
+        </div>
+        <p class="poem-edit__error" hidden></p>
+        <div class="pn-pop__foot">
+          <button class="btn btn--primary" type="submit">${esc(t('pn.save'))}</button>
+          <button class="btn btn--ghost" type="button" data-act="cancel">${esc(t('pn.cancel'))}</button>
+          ${m ? `<button class="link-btn pn-pop__del" type="button" data-act="delete">${esc(t('pn.markDelete'))}</button>` : ''}
+        </div>`;
+      document.body.append(pop);
+      placeAt(pop, rect);
+      const f = pop;
+      f.elements.note.value = m?.note || '';
+      f.elements.note.focus({ preventScroll: true });
+      const fail = (msg) => { const p = f.querySelector('.poem-edit__error'); p.textContent = msg; p.hidden = false; };
+      f.querySelector('[data-act="cancel"]').addEventListener('click', close);
+      const del = f.querySelector('[data-act="delete"]');
+      del?.addEventListener('click', async () => {
+        // two steps instead of a browser confirm() (some browsers block those)
+        if (!del.classList.contains('is-sure')) { del.classList.add('is-sure'); del.textContent = t('pn.markDeleteSure'); return; }
+        const { error } = await db.from('pn_marks').delete().eq('id', m.id);
+        if (error) return fail(failed(error));
+        await reload();
+      });
+      f.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const note = f.elements.note.value.trim();
+        if (!note) return;
+        const status = f.elements.status.value;
+        f.querySelectorAll('button, textarea, input').forEach((el) => { el.disabled = true; });
+        const { error } = m
+          ? await db.from('pn_marks').update({ note, status }).eq('id', m.id)
+          : await db.from('pn_marks').insert({ entry_id: x.id, lang, ...fresh, note, status });
+        if (error) {
+          f.querySelectorAll('button, textarea, input').forEach((el) => { el.disabled = false; });
+          return fail(failed(error));
+        }
+        await reload();
+      });
+    }
+
+    async function reload() {
+      close();
+      loaded = load();
+      await loaded;
+      render();
+    }
+
+    // clicks and hovering on marks (the root is re-rendered, the listeners stay)
+    root.addEventListener('click', (e) => {
+      const s = e.target.closest('.pn-mark, .pn-lost__item');
+      if (!s) return;
+      const m = byId(s.dataset.mark);
+      if (!m) return;
+      if (s.classList.contains('pn-lost__item')) { form(m, s.getBoundingClientRect()); return; }
+      const end = root.querySelector(`.pn-mark--end[data-mark="${m.id}"]`) || s;
+      show(m, end, true);
     });
+    root.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.classList?.contains('pn-mark--end')) {
+        e.preventDefault();
+        const m = byId(e.target.dataset.mark);
+        if (m) show(m, e.target, true);
+      }
+    });
+    root.addEventListener('mouseover', (e) => {
+      const s = e.target.closest('.pn-mark');
+      if (!s || (pop && pinned) || !matchMedia('(hover: hover)').matches) return;
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => {
+        const m = byId(s.dataset.mark);
+        const end = root.querySelector(`.pn-mark--end[data-mark="${s.dataset.mark}"]`) || s;
+        if (m && !(pop && pinned)) show(m, end, false);
+      }, 250);
+    });
+    root.addEventListener('mouseout', (e) => {
+      if (!e.target.closest('.pn-mark') || pinned) return;
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => { if (!pinned) close(); }, 300);
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (pop && !pop.contains(e.target) && !e.target.closest('.pn-mark, .pn-selbar, .pn-lost__item')) close();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+
+    return {
+      async apply(l) {
+        lang = l;
+        await loaded;
+        render();
+      },
+      // a new mark from a selection: the fragment and a little text around it
+      add(range) {
+        const a = art();
+        if (!a) return;
+        const S = a.textContent;
+        const start = indexOf(a, range.startContainer, range.startOffset);
+        const end = indexOf(a, range.endContainer, range.endOffset);
+        const quote = S.slice(start, end);
+        if (!quote.trim()) return;
+        const rect = range.getBoundingClientRect();
+        getSelection().removeAllRanges();
+        form(null, rect, {
+          quote: quote.slice(0, 4000),
+          prefix: S.slice(Math.max(0, start - CONTEXT), start),
+          suffix: S.slice(end, end + CONTEXT),
+        });
+      },
+    };
   }
 
   // ---------- Editors (admin) ----------
 
   // One form for a volume (its description) and for a chapter or note (its text):
   // number, who sees it, Russian original and translations in tabs.
-  function editorForm({ title, crumbsList, item, bodyKey, bodyLabel, numDefault, cancelHref, onSave, onDelete }) {
-    const status = item?.status || 'draft';
+  function editorForm({ title, crumbsList, item, bodyKey, bodyLabel, numDefault, cancelHref, onSave, onDelete,
+    statuses = ['draft', 'members', 'public'] }) {
+    const status = statuses.includes(item?.status) ? item.status : 'draft';
     const st = { v: {} };
     for (const l of LANGS) st.v[l] = { title: '', body: '' };
     if (item) {
@@ -350,7 +659,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
         </div>
         <fieldset class="pn-edit__who">
           <legend class="field__label">${esc(t('pn.whoSees'))}</legend>
-          ${['draft', 'members', 'public'].map((s) => `
+          ${statuses.map((s) => `
             <label class="pn-edit__opt">
               <input type="radio" name="status" value="${s}"${s === status ? ' checked' : ''}>
               <span>${esc(t(`pn.status.${s}`))}</span>
@@ -437,23 +746,30 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
   const newId = (prefix) => `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
   const failed = (error) => t('pn.saveFailed') + (error.message || error);
 
+  // old versions of the books are never public
+  const statusesFor = (vol) => (isOld(vol) ? ['draft', 'members'] : ['draft', 'members', 'public']);
+
   function volumeEditor(vol) {
+    const section = vol?.section || P.section;
+    const newTitle = t(section === 'old' ? 'pn.newOldTitle' : 'pn.newVolumeTitle');
     editorForm({
-      title: vol ? version(vol, ORIG, 'descr').title : t('pn.newVolumeTitle'),
-      crumbsList: [{ label: vol ? vol.title : t('pn.newVolumeTitle') }],
+      title: vol ? version(vol, ORIG, 'descr').title : newTitle,
+      crumbsList: [{ label: vol ? vol.title : newTitle }],
       item: vol,
       bodyKey: 'descr',
       bodyLabel: t('pn.fieldDescr'),
-      numDefault: nextNum(vols),
+      numDefault: nextNum(vols.filter((v) => (v.section || 'main') === section)),
       cancelHref: vol ? url(vol.id) : url(),
+      statuses: statusesFor({ section }),
       async onSave(d) {
         let id = vol?.id;
         if (!id) {
           const taken = new Set(vols.map((v) => v.id));
-          id = `tom-${d.num}`;
-          for (let k = 2; taken.has(id); k++) id = `tom-${d.num}-${k}`;
+          const base = `${section === 'old' ? 'old' : 'tom'}-${d.num}`;
+          id = base;
+          for (let k = 2; taken.has(id); k++) id = `${base}-${k}`;
         }
-        const row = { id, num: d.num, title: d.title, descr: d.body, tr: d.tr, status: d.status };
+        const row = { id, section, num: d.num, title: d.title, descr: d.body, tr: d.tr, status: d.status };
         const { error } = vol
           ? await db.from('pn_volumes').update(row).eq('id', id)
           : await db.from('pn_volumes').insert(row);
@@ -483,6 +799,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
       bodyLabel: t('pn.fieldBody'),
       numDefault: nextNum(entries.filter((y) => y.volume_id === vol.id && y.kind === kind)),
       cancelHref: x ? url(vol.id, x.id) : url(vol.id),
+      statuses: statusesFor(vol),
       async onSave(d) {
         const id = x?.id || newId(isNote ? 'z' : 'g');
         const row = { id, volume_id: vol.id, kind, num: d.num, title: d.title, body: d.body, tr: d.tr, status: d.status };

@@ -1,4 +1,4 @@
-/* tags.js — admin page: who sees poems with a given tag.
+/* tags.js — admin page: who sees poems and texts with a given tag.
    Tables: tag_access (tag, mode), tag_readers (tag, user_id), see supabase/schema.sql.
    Changes are saved right away. */
 // SiteFetch.get comes from layout.js; right after a deploy the browser may still run an
@@ -40,15 +40,36 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
   let catLabels = new Map();
   const extraTags = new Set(); // added on this page, no rule and no poems yet
 
+  // texts have tags too: the site edits (text_edits) over the json files of the sections
+  const SECTIONS = ['stories', 'tales', 'repatriate', 'dreams', 'chatter', 'other'];
+  let texts = [];             // { section, text_id, title, tags }
+  async function loadTexts() {
+    const { data, error } = await db.from('text_edits').select('section, text_id, title, tags, deleted');
+    if (error) console.warn('text edits failed', error);
+    const byKey = new Map();
+    await Promise.all(SECTIONS.map(async (s) => {
+      const res = await siteGet(`./data/texts/${s}.json`, { optional: true });
+      const file = res ? await res.json() : { texts: [] };
+      for (const x of file.texts || []) byKey.set(`${s}/${x.id}`, { section: s, text_id: x.id, title: x.title, tags: x.tags || [] });
+    }));
+    for (const r of data || []) {
+      if (r.deleted) { byKey.delete(`${r.section}/${r.text_id}`); continue; }
+      byKey.set(`${r.section}/${r.text_id}`, { section: r.section, text_id: r.text_id, title: r.title, tags: r.tags || [] });
+    }
+    return [...byKey.values()].filter((x) => x.tags.length);
+  }
+
   try {
-    const [p, a, r, u, cats] = await Promise.all([
+    const [p, a, r, u, cats, tx] = await Promise.all([
       must(db.from('poem_edits').select('catalog, poem_id, title, tags')),
       must(db.from('tag_access').select('tag, mode')),
       must(db.from('tag_readers').select('tag, user_id')),
       must(db.from('profiles').select('id, display_name, avatar_url, is_admin').order('display_name')),
       PoetryData.catalogs(),
+      loadTexts(),
     ]);
     poems = p.filter(x => x.tags && x.tags.length);
+    texts = tx;
     for (const x of a) access.set(x.tag, x.mode);
     for (const x of r) {
       if (!readers.has(x.tag)) readers.set(x.tag, new Set());
@@ -82,6 +103,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
   function allTags() {
     const set = new Set([...access.keys(), ...extraTags]);
     for (const p of poems) for (const tag of p.tags) set.add(tag);
+    for (const x of texts) for (const tag of x.tags) set.add(tag);
     return [...set].sort((a, b) => a.localeCompare(b, 'ru'));
   }
 
@@ -130,7 +152,21 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
             </li>`;
           }).join('')}
         </ul>
-      </details>` : `<p class="field__hint">${escapeHtml(t('tags.noPoems'))}</p>`;
+      </details>` : '';
+
+    const taggedTexts = texts.filter(x => x.tags.includes(tag));
+    const textList = taggedTexts.length ? `
+      <details class="tag-poems">
+        <summary>${escapeHtml(t('tags.textCount', { n: taggedTexts.length }))}</summary>
+        <ul>
+          ${taggedTexts.map(x => `<li>
+            <a href="/texts.html?s=${encodeURIComponent(x.section)}&amp;t=${encodeURIComponent(x.text_id)}">${escapeHtml(x.title)}</a>
+            <span class="tag-poems__cat">${escapeHtml(t('texts.' + x.section))}</span>
+          </li>`).join('')}
+        </ul>
+      </details>` : '';
+    const nothing = !tagged.length && !taggedTexts.length
+      ? `<p class="field__hint">${escapeHtml(t('tags.noPoems'))}</p>` : '';
 
     return `
       <section class="panel tag-card${mode !== 'public' ? ' tag-card--restricted' : ''}" data-tag="${escapeHtml(tag)}">
@@ -138,6 +174,8 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
         <div class="tag-modes">${modes}</div>
         ${userList}
         ${poemList}
+        ${textList}
+        ${nothing}
         <p class="form__msg" role="status"></p>
       </section>`;
   }

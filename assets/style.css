@@ -2802,7 +2802,7 @@ textarea.input{
   gap: 2px;
 }
 
-.text-list__item a{
+.text-list__item > a{
   display: grid;
   grid-template-columns: 7.5em minmax(0, 1fr) auto;
   gap: 4px 16px;
@@ -2815,8 +2815,8 @@ textarea.input{
   transition: background 160ms ease, border-color 160ms ease;
 }
 
-.text-list__item a:hover,
-.text-list__item a:focus-visible{
+.text-list__item > a:hover,
+.text-list__item > a:focus-visible{
   background: rgba(255, 255, 255, .05);
   border-color: rgba(255, 255, 255, .1);
   outline: none;
@@ -2832,10 +2832,10 @@ textarea.input{
   border-radius: 999px;
   padding: 1px 8px;
 }
-.text-list__item.is-deleted a{ opacity: .45; }
+.text-list__item.is-deleted > a{ opacity: .45; }
 
 @media (max-width: 520px){
-  .text-list__item a{ grid-template-columns: minmax(0, 1fr) auto; }
+  .text-list__item > a{ grid-template-columns: minmax(0, 1fr) auto; }
   .text-list__date{ grid-column: 1 / -1; }
 }
 
@@ -2969,7 +2969,7 @@ textarea.input{
 .text-langs__btn[aria-pressed="true"] .text-langs__orig{ color: var(--muted); }
 
 /* языки в списке текстов: тихий текст в колонке одной ширины, без плашек */
-.text-list__item a{ grid-template-columns: 7.5em minmax(0, 1fr) 7.5em; }
+.text-list__item > a{ grid-template-columns: 7.5em minmax(0, 1fr) 7.5em; }
 .text-list__langs{
   display: flex;
   align-items: baseline;
@@ -2997,7 +2997,7 @@ textarea.input{
 .text-list__sep{ color: rgba(255, 255, 255, .2); }
 
 @media (max-width: 520px){
-  .text-list__item a{ grid-template-columns: minmax(0, 1fr); }
+  .text-list__item > a{ grid-template-columns: minmax(0, 1fr); }
   .text-list__langs:empty{ display: none; }
 }
 
@@ -3503,23 +3503,84 @@ textarea.input{
 .pn-toc__item.is-draft a{ opacity: .75; border-left-style: dashed; }
 .pn-toc__item.is-members a{ border-left-color: rgba(150, 205, 240, .45); }
 
-/* «Процитировать»: появляется под выделенным текстом главы */
-.pn-quote{
+/* панель под выделенным текстом главы: «Процитировать», «Пометить» */
+.pn-selbar{
   position: fixed;
   z-index: 60;
-  padding: 6px 14px;
-  border: 1px solid var(--frost, rgba(170, 215, 245, .55));
+  display: flex;
+  border: 1px solid rgba(170, 215, 245, .55);
   border-radius: 999px;
   background: rgba(8, 14, 30, .96);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .5);
+  overflow: hidden;
+}
+.pn-selbar[hidden]{ display: none; }
+.pn-selbar button{
+  padding: 6px 14px;
+  border: 0;
+  background: none;
   color: #e3f0ff;
   font: inherit;
   font-size: 14px;
   font-weight: 600;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, .5);
   cursor: pointer;
 }
-.pn-quote[hidden]{ display: none; }
-.pn-quote:hover{ background: rgba(20, 34, 64, .98); }
+.pn-selbar button + button{ border-left: 1px solid rgba(170, 215, 245, .3); }
+.pn-selbar button:hover{ background: rgba(20, 34, 64, .98); }
+
+/* пометки на полях: пунктир под фрагментом и знак ※ после него */
+.pn-mark{
+  border-bottom: 1px dashed rgba(240, 214, 140, .7);
+  background: rgba(214, 178, 92, .07);
+  cursor: pointer;
+  transition: background .15s ease;
+}
+.pn-mark:hover{ background: rgba(214, 178, 92, .16); }
+.pn-mark--draft{ border-bottom-color: rgba(240, 214, 140, .45); }
+.pn-mark--members, .pn-mark--public{ border-bottom-color: rgba(150, 205, 240, .7); background: rgba(120, 180, 230, .07); }
+.pn-mark--end::after{
+  content: "※";
+  display: inline-block;
+  margin-left: 2px;
+  font-size: .72em;
+  vertical-align: super;
+  line-height: 0;
+  color: rgba(240, 214, 140, .95);
+}
+.pn-mark--members.pn-mark--end::after, .pn-mark--public.pn-mark--end::after{ color: rgba(170, 215, 245, .95); }
+.pn-mark--end:focus-visible{ outline: 1px solid rgba(240, 214, 140, .8); outline-offset: 2px; }
+
+.pn-pop{
+  position: absolute;
+  z-index: 70;
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid rgba(170, 215, 245, .45);
+  border-radius: 10px;
+  background: rgba(6, 10, 22, .98);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, .6);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.pn-pop__head{ display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pn-pop__title{ font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: rgba(170, 215, 245, .85); }
+.pn-pop__head .pn-status{ margin-left: auto; }
+.pn-pop__note{ white-space: pre-wrap; overflow-wrap: anywhere; }
+.pn-pop__foot{ display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 12.5px; color: var(--faint); }
+.pn-pop__acts{ margin-left: auto; }
+.pn-pop__quote{ max-height: 6.5em; overflow: hidden; }
+.pn-pop__text{ min-height: 88px; font-size: 14.5px; }
+.pn-pop__who{ display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.pn-pop--form .pn-pop__foot .btn{ justify-self: auto; padding: 6px 14px; font-size: 14px; }
+.pn-pop__del{ margin-left: auto; }
+.pn-pop__del.is-sure{ color: #f0a0a0; }
+
+.pn-lost{ margin: 22px 0 0; padding: 12px 16px; border-left: 2px dashed rgba(214, 178, 92, .5); max-width: 760px; }
+.pn-lost__title{ margin: 0 0 8px; font-size: 14px; color: rgba(240, 214, 140, .9); }
+.pn-lost__list{ list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.pn-lost__item{ cursor: pointer; }
+.pn-lost__note{ margin: 2px 0 0; font-size: 14px; color: var(--muted); white-space: pre-wrap; }
 
 .pn-edit__who{ display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; margin: 0; padding: 0; border: 0; }
 .pn-edit__who legend{ float: left; margin-right: 6px; padding: 0; }
@@ -3573,3 +3634,14 @@ textarea.input{
   .pn-history__list{ max-height: 220px; }
   .pn-history__bar .btn{ margin-left: 0; }
 }
+/* старые версии книг: тот же вид карточек, приглушённый, с пунктирной рамкой */
+.pn-old{ margin: 0 0 30px; }
+.pn-old__sub{ margin: -4px 0 12px; font-size: 14px; color: var(--faint); }
+.pn-vol--old{ min-height: 130px; border-style: dashed; background: rgba(6, 9, 20, .65); }
+.pn-vol--old .pn-vol__title{ color: #cfdced; }
+
+/* теги текстов: те же «таблетки», что у стихов */
+.text-list__tags{ display: flex; flex-wrap: wrap; gap: 4px; padding: 0 16px 8px calc(7.5em + 32px); margin-top: -8px; }
+@media (max-width: 520px){ .text-list__tags{ padding-left: 16px; } }
+.text-list__tags .poem-tag, .text-tags .poem-tag{ text-decoration: none; }
+.text-tags{ display: flex; flex-wrap: wrap; gap: 4px; margin: -6px 0 16px; }

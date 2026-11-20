@@ -278,7 +278,7 @@ create policy "catalog images admin list" on storage.objects
 
 
 -- =========================================================
--- Who sees poems with a tag.
+-- Who sees poems and texts with a tag (texts: see the block "Texts get tags" below).
 --   no row / mode 'public' -> everyone
 --   mode 'signed_in'       -> everyone who is logged in
 --   mode 'listed'          -> only users in tag_readers (empty list = only the admin)
@@ -616,3 +616,100 @@ revoke all on public.pn_volumes, public.pn_entries, public.pn_revisions from ano
 grant select on public.pn_volumes, public.pn_entries to anon, authenticated;
 grant insert, update, delete on public.pn_volumes, public.pn_entries to authenticated;
 grant select on public.pn_revisions to authenticated;
+
+
+-- =========================================================
+-- Polar Night: margin marks — the author's notes on a fragment of a chapter or note
+-- (polar-night.js). A mark is anchored by the fragment itself: quote + a little text
+-- before (prefix) and after (suffix), in the language version it was made in, so edits
+-- elsewhere in the text do not move it. status: 'draft' = only the admin,
+-- 'members' = signed-in readers ('public' is allowed for later).
+-- Added 2026-11-20.
+-- =========================================================
+
+create table if not exists public.pn_marks (
+  id         bigint generated always as identity primary key,
+  entry_id   text not null references public.pn_entries (id) on update cascade on delete cascade,
+  lang       text not null default 'ru' check (lang in ('ru', 'en', 'de')),
+  quote      text not null check (char_length(quote) between 1 and 4000),
+  prefix     text not null default '' check (char_length(prefix) <= 200),
+  suffix     text not null default '' check (char_length(suffix) <= 200),
+  note       text not null check (char_length(note) between 1 and 8000),
+  status     text not null default 'draft' check (status in ('draft', 'members', 'public')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists pn_marks_entry on public.pn_marks (entry_id);
+
+drop trigger if exists pn_marks_touch on public.pn_marks;
+create trigger pn_marks_touch
+  before update on public.pn_marks
+  for each row execute function public.touch_comment();
+
+alter table public.pn_marks enable row level security;
+
+-- seen by status, and only on an entry the reader may see (its own policy applies)
+drop policy if exists "marks by status" on public.pn_marks;
+create policy "marks by status" on public.pn_marks
+  for select using (
+    public.pn_can_see(status)
+    and exists (select 1 from public.pn_entries e where e.id = entry_id)
+  );
+
+drop policy if exists "admin writes marks" on public.pn_marks;
+create policy "admin writes marks" on public.pn_marks
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+revoke all on public.pn_marks from anon, authenticated;
+grant select on public.pn_marks to anon, authenticated;
+grant insert, update, delete on public.pn_marks to authenticated;
+
+
+-- =========================================================
+-- Polar Night: "Old versions of the books" — early drafts, kept in volumes of their own
+-- (section = 'old'), never public: only signed-in readers and the admin see them.
+-- Added 2026-11-20 (run after the Polar Night blocks above).
+-- =========================================================
+
+alter table public.pn_volumes
+  add column if not exists section text not null default 'main';
+
+alter table public.pn_volumes drop constraint if exists pn_volumes_section_check;
+alter table public.pn_volumes add constraint pn_volumes_section_check
+  check (section in ('main', 'old'));
+
+alter table public.pn_volumes drop constraint if exists pn_volumes_old_not_public;
+alter table public.pn_volumes add constraint pn_volumes_old_not_public
+  check (section = 'main' or status <> 'public');
+
+
+-- =========================================================
+-- Texts get tags too (text_edits.tags). The same tag_access rules as for poems decide
+-- who sees a text: a restricted text is not readable at all for others, and
+-- hidden_texts() tells the pages which texts from the public json files to hide.
+-- Added 2026-11-20.
+-- =========================================================
+
+alter table public.text_edits
+  add column if not exists tags text[] not null default '{}';
+
+create or replace function public.hidden_texts()
+returns table (section text, text_id text)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select e.section, e.text_id
+  from public.text_edits e
+  where not public.can_see_tags(e.tags);
+$$;
+
+grant execute on function public.hidden_texts() to anon, authenticated;
+
+drop policy if exists "text edits are public" on public.text_edits;
+drop policy if exists "text edits by tag access" on public.text_edits;
+create policy "text edits by tag access" on public.text_edits
+  for select using (public.can_see_tags(tags));

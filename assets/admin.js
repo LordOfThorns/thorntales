@@ -66,7 +66,7 @@
       tables[name] = await selectAll(name);
     }
     // newer tables: a missing one (SQL not run yet) does not stop the backup
-    for (const name of ['site_images', 'pn_volumes', 'pn_entries', 'pn_revisions']) {
+    for (const name of ['site_images', 'pn_volumes', 'pn_entries', 'pn_revisions', 'pn_marks']) {
       try { tables[name] = await selectAll(name); } catch (e) { log(`${name}: ${e.message}`); }
     }
     const restricted = new Set(tables.tag_access.filter((r) => r.mode !== 'public').map((r) => r.tag));
@@ -151,25 +151,44 @@
 
     // ----- texts -----
     log(t('admin.stepTexts'));
+    const savedBefore = saved;
     for (const s of SECTIONS) {
       const file = (await fetchJson(`./data/texts/${s}.json`, true)) || { texts: [] };
       const byId = new Map((file.texts || []).map((x) => [x.id, { ...x }]));
+      const rowIds = new Set(tables.text_edits.filter((r) => r.section === s).map((r) => r.text_id));
+      // A text with a restricted tag only in the file would disappear from the site: save it first
+      for (const x of file.texts || []) {
+        if (isHidden(x.tags) && !rowIds.has(x.id)) {
+          const tr = {};
+          for (const [l, v] of Object.entries(x.i18n || {})) tr[l] = { title: v.title || '', body: v.html || '' };
+          const row = { section: s, text_id: x.id, title: x.title || '…', date: x.date || '', lang: x.lang || 'ru',
+            body: x.html || '', tr, tags: x.tags };
+          const { error } = await db.from('text_edits').upsert(row);
+          if (error) throw new Error(`${s}/${x.id}: ${error.message}`);
+          tables.text_edits.push({ ...row, deleted: false });
+          saved++;
+        }
+      }
       for (const r of tables.text_edits.filter((r) => r.section === s)) {
         const i18n = {};
         for (const [l, v] of Object.entries(r.tr || {})) {
           if (v && (v.title || plain(v.body))) i18n[l] = { title: v.title || '', html: v.body || '' };
         }
         const x = { id: r.text_id, title: r.title, date: r.date || '', lang: r.lang || 'ru', html: r.body || '' };
+        if (r.tags && r.tags.length) x.tags = r.tags;
         if (Object.keys(i18n).length) x.i18n = i18n;
         if (r.deleted) x.hidden = true;
         byId.set(r.text_id, x);
       }
       const all = [...byId.values()].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
       if (!all.length) continue;
-      const pub = all.filter((x) => !x.hidden);
+      // the site copy leaves out hidden texts and texts with a restricted tag
+      const pub = all.filter((x) => !x.hidden && !isHidden(x.tags));
       add(`full/data/texts/${s}.json`, JSON.stringify({ texts: all }, null, 2) + '\n');
-      if (pub.length) add(`site/data/texts/${s}.json`, JSON.stringify({ texts: pub }, null, 2) + '\n');
+      // written even when empty, so a text that became hidden leaves the public file
+      if (pub.length || (file.texts || []).length) add(`site/data/texts/${s}.json`, JSON.stringify({ texts: pub }, null, 2) + '\n');
     }
+    if (saved > savedBefore) log(t('admin.savedHiddenTexts', { n: saved - savedBefore }));
 
     // ----- Polar Night: the copy the page shows when Supabase does not answer -----
     if (tables.pn_volumes && tables.pn_entries) {

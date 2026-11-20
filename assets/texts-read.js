@@ -6,6 +6,8 @@
    Edits:  table public.text_edits (supabase/schema.sql): a row replaces the text with
            the same id from the file, adds a new one, or hides one (deleted).
    Comments: thread "text/<section>/<text id>", shared by all languages.
+   Tags: "tags" in the json / text_edits.tags; the tag_access rules of the poems decide who
+   sees a text (rows are hidden by RLS, file copies via hidden_texts()). ?tag=<tag> filters a book.
 
    The admin (profiles.is_admin) sees "New text" and "Edit": an editor with bold,
    italic and an HTML mode, and tabs for the original and its translations.
@@ -45,26 +47,45 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
 
   // ---------- Data ----------
 
+  // Supabase may hang when it is down: after a few seconds the page goes on with the
+  // files alone (no site edits) instead of "Loading…" forever
+  const SOFT_MS = 6000;
+  const soft = (p, what) => Promise.race([
+    Promise.resolve(p),
+    new Promise((resolve) => setTimeout(() => resolve({ data: null, error: { message: `${what}: no answer` } }), SOFT_MS)),
+  ]);
+
   async function load(section) {
-    const [file, rows] = await Promise.all([
+    if (window.Auth) await soft(Auth.ready, 'auth'); // which texts a reader sees depends on who is signed in
+    const [file, rows, hidden, rules] = await Promise.all([
       // a missing file is an empty book; a server error is retried and then shown
       siteGet(`./data/texts/${encodeURIComponent(section)}.json`, { missingOk: true })
         .then((r) => (r ? r.json() : { texts: [] })),
-      db ? db.from('text_edits').select('*').eq('section', section)
+      db ? soft(db.from('text_edits').select('*').eq('section', section), 'text edits')
         .then(({ data, error }) => { if (error) console.warn('text edits failed', error); return data || []; })
         : Promise.resolve([]),
+      // texts with a tag this reader may not see (their rows never arrive; the file copy is dropped)
+      db ? soft(db.rpc('hidden_texts'), 'hidden texts')
+        .then(({ data, error }) => { if (error) console.warn('hidden texts failed', error); return data || []; })
+        : Promise.resolve([]),
+      // the admin sees which tags are restricted
+      db && window.Auth && Auth.profile?.is_admin ? soft(db.from('tag_access').select('tag, mode').neq('mode', 'public'), 'tag rules')
+        .then(({ data }) => data || []) : Promise.resolve([]),
     ]);
+    restricted = new Map(rules.map((r) => [r.tag, r.mode]));
+    const hiddenIds = new Set(hidden.filter((h) => h.section === section).map((h) => h.text_id));
     const fromFile = (x) => ({
       id: x.id, title: x.title, date: x.date || '', lang: x.lang || 'ru', body: x.html || '',
       tr: Object.fromEntries(Object.entries(x.i18n || {}).map(([l, v]) => [l, { title: v.title || '', body: v.html || '' }])),
+      tags: x.tags || [],
       inFile: true,
     });
     const fromRow = (r) => ({
       id: r.text_id, title: r.title, date: r.date || '', lang: r.lang || 'ru', body: r.body || '',
-      tr: r.tr || {}, edited: true, deleted: r.deleted,
+      tr: r.tr || {}, tags: r.tags || [], edited: true, deleted: r.deleted,
     });
     const byId = new Map();
-    for (const x of file.texts || []) byId.set(x.id, fromFile(x));
+    for (const x of file.texts || []) if (!hiddenIds.has(x.id)) byId.set(x.id, fromFile(x));
     for (const r of rows) {
       const had = byId.get(r.text_id);
       byId.set(r.text_id, { ...fromRow(r), inFile: !!had?.inFile, added: !had });
@@ -95,6 +116,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
   // ---------- Page ----------
 
   let root, sec, texts = [], isAdmin = false;
+  let restricted = new Map(); // admin only: tag -> access mode, for tags that are not public
 
   async function show(section, textId) {
     sec = section;
@@ -130,7 +152,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
     list();
   }
 
-  const urlFor = (id) => `/texts.html?s=${encodeURIComponent(sec.id)}${id ? `&t=${encodeURIComponent(id)}` : ''}`;
+  const urlFor = (id, tag) => `/texts.html?s=${encodeURIComponent(sec.id)}${id ? `&t=${encodeURIComponent(id)}` : ''}${tag ? `&tag=${encodeURIComponent(tag)}` : ''}`;
 
   function header(title, sub) {
     const h1 = document.querySelector('.top h1');
@@ -149,7 +171,10 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
     // "only in my language": shown when some texts are not in the site language
     const someMissing = all.some((x) => !langsOf(x).includes(siteLang));
     const only = onlyMine();
-    const visible = only ? all.filter((x) => langsOf(x).includes(siteLang)) : all;
+    // ?tag=<tag>: only the texts with this tag
+    const tag = new URLSearchParams(location.search).get('tag') || '';
+    const byTag = tag ? all.filter((x) => x.tags.includes(tag)) : all;
+    const visible = only ? byTag.filter((x) => langsOf(x).includes(siteLang)) : byTag;
     const items = visible.map((x) => {
       const v = version(x);
       // not in the site language: show every language it is there in
@@ -168,15 +193,41 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
             <span class="text-list__title">${esc(v.title)}</span>
             <span class="text-list__langs">${langInfo}${mark}</span>
           </a>
+          ${tagChips(x.tags, tag, 'text-list__tags')}
         </li>`;
     }).join('');
     root.innerHTML = `
       ${note ? `<p class="text-note">${esc(note)}</p>` : ''}
       ${isAdmin ? `<div class="text-admin"><a class="btn" href="${esc(urlFor('new'))}">${esc(t('texts.newText', '+ Новый текст'))}</a></div>` : ''}
+      ${tag ? `<div class="poem-filter">${esc(t('poems.tagFilter', 'Тег'))}:
+        <span class="poem-tag poem-tag--active">#${esc(tag)}</span>
+        <a class="link-btn" href="${esc(urlFor())}">${esc(t('poems.clearTag', 'показать все'))}</a></div>` : ''}
       ${someMissing || only ? langOnlySwitch(only) : ''}
       ${visible.length ? `<ol class="text-list">${items}</ol>`
         : `<p class="text-note">${esc(only && all.length ? t('texts.noneInMyLang', 'На вашем языке здесь пока ничего нет.') : t('texts.empty', 'Эта книга пока пустая.'))}</p>`}
       <p class="texts-back"><a href="/texts.html">${esc(t('texts.back', '← к стопкам книг'))}</a></p>`;
+  }
+
+  // Tags of a text as links to the book filtered by that tag (the same chips as poems).
+  // The admin sees which tags hide the text from others.
+  function tagChips(tags, active, cls) {
+    if (!tags || !tags.length) return '';
+    return `<div class="${cls}">${tags.map((tag) => {
+      const mode = isAdmin ? restricted.get(tag) : null;
+      const c = (tag === active ? ' poem-tag--active' : '') + (mode ? ' poem-tag--restricted' : '');
+      const title = mode ? ` title="${esc(t(`tags.mode.${mode}`, mode))}"` : '';
+      return `<a class="poem-tag${c}" href="${esc(urlFor(null, tag === active ? '' : tag))}"${title}>#${esc(tag)}</a>`;
+    }).join('')}</div>`;
+  }
+
+  // "a, b; #c" -> ['a', 'b', 'c'] (the same rules as the poem editor)
+  function parseTags(s) {
+    const out = [];
+    for (let tag of String(s || '').split(/[,;\n]/)) {
+      tag = tag.trim().replace(/^#+/, '').replace(/\s+/g, ' ').slice(0, 40);
+      if (tag && !out.includes(tag)) out.push(tag);
+    }
+    return out;
   }
 
   // "Only what is in my language": a per-reader wish kept in this browser, the same
@@ -220,6 +271,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
       header(v.title, `<span class="text-meta">${esc(x.date)}</span> ${langControl}
         ${isAdmin ? `<button class="poem__edit-btn" type="button" data-act="edit">${esc(t('texts.edit', 'Править'))}</button>` : ''}`);
       root.innerHTML = `
+        ${tagChips(x.tags, '', 'text-tags')}
         <article class="text-body" lang="${v.lang}">${sanitize(v.body)}</article>
         <div class="text-comments" id="textComments"></div>
         <nav class="catalog-pager">
@@ -278,6 +330,10 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
             <input class="input" name="date" maxlength="10" value="${esc(st.date)}" placeholder="2026-11-14">
           </label>
         </div>
+        <label class="field">
+          <span class="field__label">${esc(t('poems.fieldTags', 'Теги'))} <span class="field__hint">· ${esc(t('poems.tagsHint', 'через запятую'))}</span></span>
+          <input class="input" name="tags" value="${esc((x?.tags || []).join(', '))}">
+        </label>
         <div class="text-edit__tabs" role="tablist"></div>
         <label class="field">
           <span class="field__label">${esc(t('poems.fieldTitle', 'Название'))}</span>
@@ -350,7 +406,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
       }
       return {
         section: sec.id, text_id: id, title: st.v[st.lang].title || x?.title || id,
-        date: st.date, lang: st.lang, body: st.v[st.lang].body, tr, deleted,
+        date: st.date, lang: st.lang, body: st.v[st.lang].body, tr, deleted, tags: parseTags(f.tags.value),
       };
     }
     function busy(on) { form.querySelectorAll('button, input, select, textarea').forEach((el) => { el.disabled = on; }); }

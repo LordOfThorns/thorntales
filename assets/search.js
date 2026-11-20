@@ -4,10 +4,11 @@
      poems   data/poetry/catalogs.json + <cat>.txt, with site edits (poem_edits) applied;
              poems hidden from this reader (PoetryData.hiddenPoems) are dropped, and
              poem_edits rows the reader may not read never arrive (RLS)
-     texts   data/texts/<section>.json + text_edits (hidden texts are left out)
+     texts   data/texts/<section>.json + text_edits (hidden texts and texts with a tag the reader
+             may not see, hidden_texts(), are left out)
      polar   Polar Night chapters and notes: pn_volumes + pn_entries (by status, see schema.sql),
              or the backup copy data/polar-night/book.json
-   Tags come from the poems the reader sees, so a restricted tag shows only to those
+   Tags come from the poems and texts the reader sees, so a restricted tag shows only to those
    who may see its poems.
 
    URL: search.html?q=<words>&tag=<tag>[,<tag>]&in=all|poems|texts|polar
@@ -122,21 +123,28 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
 
   async function loadTexts() {
     const rows = await selectAll('text_edits');
+    // texts with a tag this reader may not see: their rows never arrive, the file copy is dropped
+    let hidden = [];
+    if (db) {
+      const { data, error } = await db.rpc('hidden_texts');
+      if (error) console.warn('hidden texts failed', error); else hidden = data || [];
+    }
     const out = [];
     await Promise.all(SECTIONS.map(async (s) => {
       const file = await fetchJson(`./data/texts/${s}.json`);
-      const byId = new Map((file?.texts || []).map((x) => [x.id, {
-        id: x.id, title: x.title, date: x.date, html: x.html,
+      const hiddenIds = new Set(hidden.filter((h) => h.section === s).map((h) => h.text_id));
+      const byId = new Map((file?.texts || []).filter((x) => !hiddenIds.has(x.id)).map((x) => [x.id, {
+        id: x.id, title: x.title, date: x.date, html: x.html, tags: x.tags || [],
         tr: Object.values(x.i18n || {}).map((v) => `${v.title || ''} ${plain(v.html)}`).join(' '),
       }]));
       for (const r of rows.filter((r) => r.section === s)) {
         if (r.deleted) { byId.delete(r.text_id); continue; }
-        byId.set(r.text_id, { id: r.text_id, title: r.title, date: r.date, html: r.body, tr: trText(r.tr) });
+        byId.set(r.text_id, { id: r.text_id, title: r.title, date: r.date, html: r.body, tags: r.tags || [], tr: trText(r.tr) });
       }
       const where = t('texts.' + s);
       for (const x of byId.values()) {
         out.push({
-          kind: 'texts', id: x.id, title: x.title || '', date: x.date || '', tags: [], where,
+          kind: 'texts', id: x.id, title: x.title || '', date: x.date || '', tags: x.tags, where,
           href: `/texts.html?s=${encodeURIComponent(s)}&t=${encodeURIComponent(x.id)}`,
           text: plain(x.html), extra: x.tr || '',
         });
