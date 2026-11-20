@@ -5,7 +5,8 @@
              poems hidden from this reader (PoetryData.hiddenPoems) are dropped, and
              poem_edits rows the reader may not read never arrive (RLS)
      texts   data/texts/<section>.json + text_edits (hidden texts are left out)
-     polar   data/polar-night/texts.json (same format as a text section; may not exist yet)
+     polar   Polar Night chapters and notes: pn_volumes + pn_entries (by status, see schema.sql),
+             or the backup copy data/polar-night/book.json
    Tags come from the poems the reader sees, so a restricted tag shows only to those
    who may see its poems.
 
@@ -144,12 +145,31 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
     return out;
   }
 
+  // Polar Night chapters and notes: from Supabase (RLS checks the status), or the backup copy
   async function loadPolar() {
-    const file = await fetchJson('./data/polar-night/texts.json');
-    return (file?.texts || []).map((x) => ({
-      kind: 'polar', id: x.id, title: x.title || '', date: x.date || '', tags: x.tags || [],
-      where: t('nav.polarNight'), href: x.href || '/polar-night.html',
-      text: plain(x.html), extra: '',
+    let vols = null;
+    let ents = null;
+    if (db) {
+      const [v, e] = await Promise.all([
+        db.from('pn_volumes').select('id,num,title,status'),
+        db.from('pn_entries').select('id,volume_id,kind,title,body,tr,status'),
+      ]);
+      if (!v.error && !e.error) { vols = v.data; ents = e.data; }
+      else console.warn('polar night failed', v.error || e.error);
+    }
+    if (!vols) {
+      const book = await fetchJson('./data/polar-night/book.json');
+      vols = book?.volumes || [];
+      ents = book?.entries || [];
+    }
+    // the admin also gets drafts: search what readers see ('members' only when signed in)
+    const seen = (s) => s === 'public' || (s === 'members' && !!(window.Auth && Auth.user));
+    const volById = new Map(vols.filter((v) => seen(v.status || 'public')).map((v) => [v.id, v]));
+    return ents.filter((x) => seen(x.status || 'public') && volById.has(x.volume_id)).map((x) => ({
+      kind: 'polar', id: x.id, title: x.title || '', date: '', tags: [],
+      where: `${t('nav.polarNight')} · ${volById.get(x.volume_id).title}`,
+      href: `/polar-night.html?v=${encodeURIComponent(x.volume_id)}&e=${encodeURIComponent(x.id)}`,
+      text: plain(x.body), extra: trText(x.tr),
     }));
   }
 

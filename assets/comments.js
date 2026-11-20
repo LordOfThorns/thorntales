@@ -144,10 +144,42 @@
             ${author.is_admin ? `<span class="comment__badge">${t('comments.author')}</span>` : ''}
             <time class="comment__date" datetime="${c.created_at}">${formatDate(c.created_at)}${c.updated_at ? ' · ' + t('comments.edited') : ''}</time>
           </div>
-          <div class="comment__body">${Auth.escapeHtml(c.body)}</div>
+          <div class="comment__body">${bodyHtml(c.body)}</div>
           ${actions ? `<div class="comment__actions">${actions}</div>` : ''}
         </div>
       </li>`;
+  }
+
+  // Lines starting with "> " are a quote (e.g. from a Polar Night chapter); the rest is plain
+  // text. .comment__body keeps line breaks (pre-wrap), so no newlines around the quote blocks.
+  function bodyHtml(text) {
+    const parts = [];
+    for (const line of String(text || '').split('\n')) {
+      const q = /^> |^>$/.test(line); // ">_<" is not a quote
+      const last = parts[parts.length - 1];
+      const s = q ? line.replace(/^> ?/, '') : line;
+      if (last && last.q === q) last.lines.push(s);
+      else parts.push({ q, lines: [s] });
+    }
+    return parts.map((p) => {
+      const s = p.lines.join('\n');
+      if (p.q) return `<blockquote class="comment__quote">${Auth.escapeHtml(s.trim())}</blockquote>`;
+      return Auth.escapeHtml(s.replace(/^\n+|\n+$/g, ''));
+    }).join('');
+  }
+
+  // Put a quote into the comment form of a thread (opens it); "> " before every line
+  async function quote(thread, text) {
+    const item = items.get(thread);
+    if (!item) return;
+    if (!item.open) await toggle(item);
+    item.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const ta = item.el.querySelector('.comment-form__text');
+    if (!ta) return; // not signed in: the panel says how to sign in
+    const q = `${text.split(/\r?\n/).map((l) => `> ${l}`).join('\n')}\n\n`;
+    ta.value = ta.value.trim() ? `${ta.value.replace(/\s*$/, '')}\n\n${q}` : q;
+    ta.focus({ preventScroll: true });
+    ta.setSelectionRange(ta.value.length, ta.value.length);
   }
 
   function wirePanel(item, panel) {
@@ -246,5 +278,5 @@
     });
   }
 
-  window.Comments = { mount };
+  window.Comments = { mount, quote };
 })();

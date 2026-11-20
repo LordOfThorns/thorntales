@@ -478,3 +478,141 @@ drop policy if exists "site images admin list" on storage.objects;
 create policy "site images admin list" on storage.objects
   for select to authenticated
   using (bucket_id = 'site-images' and public.is_admin());
+
+
+-- =========================================================
+-- Polar Night (polar-night.html): volumes, their chapters and author notes,
+-- and the history of every version of a chapter or note.
+--   pn_volumes:   one volume (num = order, descr = HTML)
+--   pn_entries:   kind 'chapter' (with comments, thread 'pn/<volume>/<entry>') or 'note'
+--   pn_revisions: written by a trigger on every change of the title, text or translations,
+--                 so nothing is lost; kept also after an entry is deleted
+-- tr = { "en": { "title": "...", "body": "<p>...</p>" }, "de": { ... } }  (volumes: descr in body)
+-- status: 'draft' = only the admin, 'members' = signed-in users, 'public' = everyone.
+-- Added 2026-11-20.
+-- =========================================================
+
+create table if not exists public.pn_volumes (
+  id         text primary key check (id ~ '^[a-z0-9-]{1,40}$'),
+  num        integer not null default 1,
+  title      text not null check (char_length(title) between 1 and 300),
+  descr      text not null default '' check (char_length(descr) <= 40000),
+  tr         jsonb not null default '{}'::jsonb,
+  status     text not null default 'draft' check (status in ('draft', 'members', 'public')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.pn_entries (
+  id         text primary key check (id ~ '^[a-z0-9-]{1,60}$'),
+  volume_id  text not null references public.pn_volumes (id) on update cascade,
+  kind       text not null check (kind in ('chapter', 'note')),
+  num        integer not null default 1,
+  title      text not null check (char_length(title) between 1 and 300),
+  body       text not null default '' check (char_length(body) <= 800000),
+  tr         jsonb not null default '{}'::jsonb,
+  status     text not null default 'draft' check (status in ('draft', 'members', 'public')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists pn_entries_volume on public.pn_entries (volume_id, kind, num);
+
+create table if not exists public.pn_revisions (
+  id         bigint generated always as identity primary key,
+  entry_id   text not null,
+  volume_id  text not null,
+  kind       text not null,
+  title      text not null,
+  body       text not null,
+  tr         jsonb not null default '{}'::jsonb,
+  saved_at   timestamptz not null default now()
+);
+create index if not exists pn_revisions_entry on public.pn_revisions (entry_id, saved_at);
+
+drop trigger if exists pn_volumes_touch on public.pn_volumes;
+create trigger pn_volumes_touch
+  before update on public.pn_volumes
+  for each row execute function public.touch_comment();
+
+drop trigger if exists pn_entries_touch on public.pn_entries;
+create trigger pn_entries_touch
+  before update on public.pn_entries
+  for each row execute function public.touch_comment();
+
+-- Every new text of an entry is kept (the trigger, not the browser, so no edit slips by)
+create or replace function public.pn_keep_revision()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT'
+     or new.title is distinct from old.title
+     or new.body is distinct from old.body
+     or new.tr is distinct from old.tr then
+    insert into public.pn_revisions (entry_id, volume_id, kind, title, body, tr)
+    values (new.id, new.volume_id, new.kind, new.title, new.body, new.tr);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists pn_entries_revision on public.pn_entries;
+create trigger pn_entries_revision
+  after insert or update on public.pn_entries
+  for each row execute function public.pn_keep_revision();
+
+alter table public.pn_volumes enable row level security;
+alter table public.pn_entries enable row level security;
+alter table public.pn_revisions enable row level security;
+
+-- who may read a volume or entry with this status
+create or replace function public.pn_can_see(st text)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select st = 'public'
+      or (st = 'members' and auth.uid() is not null)
+      or public.is_admin();
+$$;
+
+drop policy if exists "published volumes are public" on public.pn_volumes;
+drop policy if exists "volumes by status" on public.pn_volumes;
+create policy "volumes by status" on public.pn_volumes
+  for select using (public.pn_can_see(status));
+
+drop policy if exists "admin writes volumes" on public.pn_volumes;
+create policy "admin writes volumes" on public.pn_volumes
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+-- an entry is seen when both it and its volume may be seen
+-- (the volume row is read through its own policy, so its status counts too)
+drop policy if exists "published entries are public" on public.pn_entries;
+drop policy if exists "entries by status" on public.pn_entries;
+create policy "entries by status" on public.pn_entries
+  for select using (
+    public.pn_can_see(status)
+    and exists (select 1 from public.pn_volumes v where v.id = volume_id)
+  );
+
+drop policy if exists "admin writes entries" on public.pn_entries;
+create policy "admin writes entries" on public.pn_entries
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+-- the history is only for the admin; rows are added by the trigger only
+drop policy if exists "admin reads revisions" on public.pn_revisions;
+create policy "admin reads revisions" on public.pn_revisions
+  for select to authenticated
+  using (public.is_admin());
+
+revoke all on public.pn_volumes, public.pn_entries, public.pn_revisions from anon, authenticated;
+grant select on public.pn_volumes, public.pn_entries to anon, authenticated;
+grant insert, update, delete on public.pn_volumes, public.pn_entries to authenticated;
+grant select on public.pn_revisions to authenticated;

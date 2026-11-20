@@ -66,7 +66,7 @@
       tables[name] = await selectAll(name);
     }
     // newer tables: a missing one (SQL not run yet) does not stop the backup
-    for (const name of ['site_images']) {
+    for (const name of ['site_images', 'pn_volumes', 'pn_entries', 'pn_revisions']) {
       try { tables[name] = await selectAll(name); } catch (e) { log(`${name}: ${e.message}`); }
     }
     const restricted = new Set(tables.tag_access.filter((r) => r.mode !== 'public').map((r) => r.tag));
@@ -171,6 +171,18 @@
       if (pub.length) add(`site/data/texts/${s}.json`, JSON.stringify({ texts: pub }, null, 2) + '\n');
     }
 
+    // ----- Polar Night: the copy the page shows when Supabase does not answer -----
+    if (tables.pn_volumes && tables.pn_entries) {
+      const vols = [...tables.pn_volumes].sort((a, b) => a.num - b.num);
+      const ents = [...tables.pn_entries].sort((a, b) => a.volume_id.localeCompare(b.volume_id) || a.kind.localeCompare(b.kind) || a.num - b.num);
+      const book = (v, e) => JSON.stringify({ volumes: v, entries: e }, null, 2) + '\n';
+      add('full/data/polar-night/book.json', book(vols, ents));
+      // the site copy is a public file: only what everyone may see
+      const pubVols = vols.filter((v) => v.status === 'public');
+      const pubIds = new Set(pubVols.map((v) => v.id));
+      add('site/data/polar-night/book.json', book(pubVols, ents.filter((e) => e.status === 'public' && pubIds.has(e.volume_id))));
+    }
+
     // ----- pictures replaced on the site (home page windows, ...) -----
     for (const r of tables.site_images || []) {
       const img = await fetchBytes(r.url);
@@ -242,8 +254,8 @@
     return [
       'Thorntales backup, ' + new Date().toISOString(),
       '',
-      'site/  - the public data folder with all site edits applied, without hidden poems',
-      '         and hidden texts. tools/apply-backup.cmd copies it over data/ in the repository.',
+      'site/  - the public data folder with all site edits applied, without hidden poems,',
+      '         hidden texts and not public Polar Night. tools/apply-backup.cmd copies it over data/.',
       'full/  - everything: the same files with hidden poems and texts, pictures replaced on the',
       '         site (full/site-images) and every Supabase',
       '         table as JSON (full/supabase). Keep it private.',
