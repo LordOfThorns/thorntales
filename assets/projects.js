@@ -14,6 +14,11 @@
       desc: tr('projects.mapGen.desc', 'странные карты несуществующих миров'),
       href: '/terrain.html',
     },
+    {
+      label: tr('nav.randomGen', 'Генератор всего'),
+      desc: tr('projects.randomGen.desc', 'случайные вещи и существа'),
+      href: '/random.html',
+    },
   ];
 
   const DECOR_COUNT = 11;

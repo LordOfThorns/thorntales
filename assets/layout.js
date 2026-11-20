@@ -23,6 +23,7 @@
     projects:   { label: 'Проекты',        href: '/projects.html',    parent: 'home', menu: true },
     search:     { label: 'Поиск',          href: '/search.html',      parent: 'home', menu: true },
     mapGen:     { label: 'Генератор карт', href: '/terrain.html',     parent: 'projects' },
+    randomGen:  { label: 'Генератор всего', href: '/random.html',     parent: 'projects' },
     login:      { label: 'Вход',           href: '/login.html',       parent: 'home' },
     account:    { label: 'Кабинет',        href: '/account.html',     parent: 'home' },
     tags:       { label: 'Теги',           href: '/tags.html',        parent: 'admin' },
