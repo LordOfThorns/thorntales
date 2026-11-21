@@ -36,7 +36,7 @@
     if (!user) return null;
     const { data, error } = await client
       .from('profiles')
-      .select('id, display_name, avatar_url, is_admin')
+      .select('*') // id, display_name, avatar_url, is_admin, is_reviewer (all public anyway)
       .eq('id', user.id)
       .maybeSingle();
     if (error) console.warn('profile load failed', error);

@@ -118,10 +118,14 @@
          </form>`
       : `<p class="comments__note"><a href="/login.html?next=${encodeURIComponent(location.pathname + location.search + '#' + (item.el.closest('[id]')?.id || ''))}">${t('comments.signInLink')}</a>${t('comments.signInRest')}</p>`;
 
-    // Keep a draft that was being typed when the panel re-renders
-    const draft = panel.querySelector('.comment-form__text')?.value || '';
+    // Keep a draft that was being typed in the new-comment form when the panel re-renders.
+    // Only that form: an open edit form of a comment comes first in the panel, and taking its
+    // text copied the edited comment into the new-comment box (it looked doubled, and was
+    // sent twice if "Send" was pressed).
+    const NEW = '.comment-form:not(.comment-form--edit) .comment-form__text';
+    const draft = panel.querySelector(NEW)?.value || '';
     panel.innerHTML = listHtml + formHtml;
-    const ta = panel.querySelector('.comment-form__text');
+    const ta = panel.querySelector(NEW);
     if (ta) ta.value = draft;
 
     wirePanel(item, panel);

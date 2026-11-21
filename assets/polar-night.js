@@ -96,12 +96,15 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
   }
   const crumbs = (list) => { if (window.Layout) Layout.setCrumbs(list); };
   // who sees it: drafts only the admin, 'members' only signed-in readers
-  const statusMark = (x) => (x.status === 'draft' || x.status === 'members'
-    ? ` <span class="pn-status pn-status--${x.status}">${esc(t(x.status === 'draft' ? 'pn.draft' : 'pn.members'))}</span>` : '');
+  // who sees it, as a small label: draft (only the admin), reviewers, signed-in readers
+  const STATUS_LABEL = { draft: 'pn.draft', reviewers: 'pn.reviewers', members: 'pn.members' };
+  const statusMark = (x) => (STATUS_LABEL[x.status]
+    ? ` <span class="pn-status pn-status--${x.status}">${esc(t(STATUS_LABEL[x.status]))}</span>` : '');
 
   // ---------- Data ----------
 
   let isAdmin = false;
+  let isReviewer = false; // reviewers read the history of edits (the admin is one too)
   let vols = [];
   let entries = []; // list rows: no bodies (see LIST_COLS)
 
@@ -161,6 +164,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
   async function start() {
     if (window.Auth) await soft(Auth.ready, 'auth');
     isAdmin = !!(window.Auth && Auth.profile?.is_admin);
+    isReviewer = isAdmin || !!(window.Auth && Auth.profile?.is_reviewer);
     root.innerHTML = `<p class="text-note">${esc(t('account.loading'))}</p>`;
     try {
       await loadLists();
@@ -173,7 +177,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
 
   // Not found (HTML). A guest may be looking at something only for signed-in readers.
   function notFound() {
-    if (window.Auth && Auth.user) return esc(t('pn.notFound'));
+    if (window.Auth && Auth.user) return esc(t(isReviewer ? 'pn.notFound' : 'pn.notFoundMember'));
     const back = encodeURIComponent(location.pathname + location.search);
     return `${esc(t('pn.notFoundGuest'))} <a href="/login.html?next=${back}">${esc(t('pn.signIn'))}</a>`;
   }
@@ -188,7 +192,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
     const x = await loadEntry(P.e);
     if (!x || x.volume_id !== vol.id) return volume(vol, notFound());
     if (P.edit && isAdmin) return entryEditor(vol, x, x.kind);
-    if (P.history && isAdmin) return historyView(vol, x);
+    if (P.history && isReviewer) return historyView(vol, x);
     return reader(vol, x);
   }
 
@@ -288,9 +292,10 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
           <button class="text-langs__btn" type="button" data-act="lang" data-lang="${l}" aria-pressed="${l === shown}">${esc(l.toUpperCase())}${l === ORIG ? ` <span class="text-langs__orig">· ${esc(t('texts.original'))}</span>` : ''}</button>`).join('')}</span>`;
       }
       if (!langs.includes(siteLang)) langControl += ` <span class="poem__untranslated">${esc(t('poems.notTranslated'))}</span>`;
-      const admin = isAdmin ? `
-        <a class="poem__edit-btn" href="${esc(url(vol.id, x.id, { edit: '' }))}">${esc(t('pn.edit'))}</a>
-        <a class="poem__edit-btn" href="${esc(url(vol.id, x.id, { history: '' }))}">${esc(t('pn.history'))}</a>` : '';
+      // the admin edits; reviewers (and the admin) read the history of edits
+      const admin = `${isAdmin ? `
+        <a class="poem__edit-btn" href="${esc(url(vol.id, x.id, { edit: '' }))}">${esc(t('pn.edit'))}</a>` : ''}${isReviewer ? `
+        <a class="poem__edit-btn" href="${esc(url(vol.id, x.id, { history: '' }))}">${esc(t('pn.history'))}</a>` : ''}`;
       header(v.title, `<span class="text-meta">${esc(volLabel(vol))} · ${esc(entryLabel(x))}</span>${statusMark(x)} ${langControl} ${admin}`);
       crumbs([{ label: volTitle, href: url(vol.id) }, { label: v.title }]);
       root.innerHTML = `
@@ -507,7 +512,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
       pop.addEventListener('mouseleave', () => { if (!pinned) hoverTimer = setTimeout(close, 300); });
       pop.querySelector('[data-act="edit"]')?.addEventListener('click', () => form(m, anchor.getBoundingClientRect()));
     }
-    const markWho = (s) => `<span class="pn-status pn-status--${s === 'draft' ? 'draft' : 'members'}">${esc(t(s === 'draft' ? 'pn.markOnlyMe' : 'pn.members'))}</span>`;
+    const markWho = (s) => `<span class="pn-status pn-status--${STATUS_LABEL[s] ? s : 'members'}">${esc(t(s === 'draft' ? 'pn.markOnlyMe' : STATUS_LABEL[s] || 'pn.members'))}</span>`;
 
     // the form: a new mark (with its fragment) or an existing one
     function form(m, rect, fresh) {
@@ -521,8 +526,8 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
         <blockquote class="comment__quote pn-pop__quote">${esc((m || fresh).quote.length > 300 ? `${(m || fresh).quote.slice(0, 300)}…` : (m || fresh).quote)}</blockquote>
         <textarea class="input pn-pop__text" name="note" rows="4" maxlength="8000" required placeholder="${esc(t('pn.markPh'))}"></textarea>
         <div class="pn-pop__who">
-          ${['draft', 'members'].map((s) => `<label class="pn-edit__opt"><input type="radio" name="status" value="${s}"${s === st ? ' checked' : ''}>
-            <span>${esc(t(s === 'draft' ? 'pn.markOnlyMe' : 'pn.status.members'))}</span></label>`).join('')}
+          ${['draft', 'reviewers', 'members'].map((s) => `<label class="pn-edit__opt"><input type="radio" name="status" value="${s}"${s === st ? ' checked' : ''}>
+            <span>${esc(t(s === 'draft' ? 'pn.markOnlyMe' : `pn.status.${s}`))}</span></label>`).join('')}
         </div>
         <p class="poem-edit__error" hidden></p>
         <div class="pn-pop__foot">
@@ -747,7 +752,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
   const failed = (error) => t('pn.saveFailed') + (error.message || error);
 
   // old versions of the books are never public
-  const statusesFor = (vol) => (isOld(vol) ? ['draft', 'members'] : ['draft', 'members', 'public']);
+  const statusesFor = (vol) => (isOld(vol) ? ['draft', 'reviewers', 'members'] : ['draft', 'reviewers', 'members', 'public']);
 
   function volumeEditor(vol) {
     const section = vol?.section || P.section;
@@ -875,7 +880,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
             <div class="pn-history__bar">
               <span class="text-langs" role="group">${LANGS.map((l) => `<button class="text-langs__btn" type="button" data-lang="${l}" aria-pressed="${l === lang}">${l.toUpperCase()}</button>`).join('')}</span>
               <label class="lang-only"><input type="checkbox" data-act="whole"${whole ? ' checked' : ''}><span>${esc(t('pn.showAll'))}</span></label>
-              ${sel > 0 ? `<button class="btn" type="button" data-act="restore">${esc(t('pn.restore'))}</button>` : ''}
+              ${sel > 0 && isAdmin ? `<button class="btn" type="button" data-act="restore">${esc(t('pn.restore'))}</button>` : ''}
             </div>
             <div class="pn-diff text-body">${diffHtml}</div>
           </div>
@@ -1039,7 +1044,8 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
     // signing in or out as the admin changes drafts and buttons: simply reload
     if (window.Auth) {
       Auth.onChange(({ profile }) => {
-        if (!!profile?.is_admin !== isAdmin) location.reload();
+        const admin = !!profile?.is_admin;
+        if (admin !== isAdmin || (admin || !!profile?.is_reviewer) !== isReviewer) location.reload();
       });
     }
   });

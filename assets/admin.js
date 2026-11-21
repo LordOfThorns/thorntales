@@ -33,6 +33,50 @@
   if (!Auth.profile?.is_admin) { sub.textContent = t('tags.adminOnly'); return; }
   sub.textContent = t('admin.sub');
   page.hidden = false;
+  setupReviewers();
+
+  // ---------- Reviewers ----------
+  // Signed-in readers the admin picks: they see Polar Night marked "reviewers only" and the
+  // history of edits. Saved at once through set_reviewer() (supabase/schema.sql): users
+  // cannot change is_reviewer themselves.
+  async function setupReviewers() {
+    const host = document.getElementById('reviewers');
+    if (!host) return;
+    const { data, error } = await db.from('profiles')
+      .select('id, display_name, avatar_url, is_admin, is_reviewer').order('display_name');
+    if (error) {
+      host.innerHTML = `<p class="admin__text admin__text--muted">${escapeHtml(t('admin.reviewersFailed'))} ${escapeHtml(error.message)}</p>`;
+      return;
+    }
+    const users = data.filter((u) => !u.is_admin);
+    if (!users.length) {
+      host.innerHTML = `<p class="admin__text admin__text--muted">${escapeHtml(t('admin.noUsers'))}</p>`;
+      return;
+    }
+    host.innerHTML = users.map((u) => `
+      <label class="tag-reader">
+        <input type="checkbox" data-user="${escapeHtml(u.id)}"${u.is_reviewer ? ' checked' : ''}>
+        ${Auth.avatarHtml(u, 'tag-reader__avatar')}
+        <span>${escapeHtml(u.display_name)}</span>
+      </label>`).join('') + '<p class="form__msg" role="status"></p>';
+    host.addEventListener('change', async (e) => {
+      const box = e.target.closest('[data-user]');
+      if (!box) return;
+      const msg = host.querySelector('.form__msg');
+      box.disabled = true;
+      msg.classList.remove('is-error');
+      msg.textContent = t('tags.saving');
+      const { error: err } = await db.rpc('set_reviewer', { uid: box.dataset.user, on_off: box.checked });
+      box.disabled = false;
+      if (err) {
+        box.checked = !box.checked;
+        msg.textContent = t('poems.saveFailed') + err.message;
+        msg.classList.add('is-error');
+        return;
+      }
+      msg.textContent = t('tags.saved');
+    });
+  }
 
   button.addEventListener('click', async () => {
     button.disabled = true;

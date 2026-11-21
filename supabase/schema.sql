@@ -713,3 +713,80 @@ drop policy if exists "text edits are public" on public.text_edits;
 drop policy if exists "text edits by tag access" on public.text_edits;
 create policy "text edits by tag access" on public.text_edits
   for select using (public.can_see_tags(tags));
+
+
+-- =========================================================
+-- Reviewers: signed-in readers the admin picks (admin.html). Polar Night gets one more
+-- status, 'reviewers' (volumes, entries, margin marks), and reviewers may read the
+-- history of edits of every entry they may see. Users cannot make themselves reviewers:
+-- profiles.is_reviewer is not in their column grant; only set_reviewer() (admin) changes it.
+-- Added 2026-11-21 (run after all the Polar Night blocks above).
+-- =========================================================
+
+alter table public.profiles
+  add column if not exists is_reviewer boolean not null default false;
+
+-- Is the current user a reviewer? (the admin counts as one)
+create or replace function public.is_reviewer()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select public.is_admin()
+      or coalesce((select is_reviewer from public.profiles where id = auth.uid()), false);
+$$;
+
+-- The admin makes a user a reviewer or not
+create or replace function public.set_reviewer(uid uuid, on_off boolean)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'only the admin can choose reviewers';
+  end if;
+  update public.profiles set is_reviewer = on_off where id = uid;
+end;
+$$;
+
+revoke execute on function public.set_reviewer(uuid, boolean) from public, anon;
+grant execute on function public.is_reviewer() to anon, authenticated;
+grant execute on function public.set_reviewer(uuid, boolean) to authenticated;
+
+-- who may read a volume, entry or margin mark with this status
+create or replace function public.pn_can_see(st text)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select st = 'public'
+      or (st = 'members' and auth.uid() is not null)
+      or (st = 'reviewers' and public.is_reviewer())
+      or public.is_admin();
+$$;
+
+alter table public.pn_volumes drop constraint if exists pn_volumes_status_check;
+alter table public.pn_volumes add constraint pn_volumes_status_check
+  check (status in ('draft', 'reviewers', 'members', 'public'));
+alter table public.pn_entries drop constraint if exists pn_entries_status_check;
+alter table public.pn_entries add constraint pn_entries_status_check
+  check (status in ('draft', 'reviewers', 'members', 'public'));
+alter table public.pn_marks drop constraint if exists pn_marks_status_check;
+alter table public.pn_marks add constraint pn_marks_status_check
+  check (status in ('draft', 'reviewers', 'members', 'public'));
+
+-- the history of an entry: the admin, and reviewers for entries they may see
+-- (the entry is read through its own policy, so drafts stay the admin's)
+drop policy if exists "admin reads revisions" on public.pn_revisions;
+drop policy if exists "reviewers read revisions" on public.pn_revisions;
+create policy "reviewers read revisions" on public.pn_revisions
+  for select to authenticated
+  using (
+    public.is_admin()
+    or (public.is_reviewer() and exists (select 1 from public.pn_entries e where e.id = entry_id))
+  );

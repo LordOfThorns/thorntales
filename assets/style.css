@@ -3645,3 +3645,10 @@ textarea.input{
 @media (max-width: 520px){ .text-list__tags{ padding-left: 16px; } }
 .text-list__tags .poem-tag, .text-tags .poem-tag{ text-decoration: none; }
 .text-tags{ display: flex; flex-wrap: wrap; gap: 4px; margin: -6px 0 16px; }
+
+/* ревьюеры: своя метка статуса (фиолетовая), список пользователей в админке */
+.pn-status--reviewers{ border-style: solid; border-color: rgba(185, 160, 245, .55); color: rgba(215, 200, 255, .95); }
+.pn-toc__item.is-reviewers a{ border-left-color: rgba(185, 160, 245, .5); }
+.pn-mark--reviewers{ border-bottom-color: rgba(185, 160, 245, .75); background: rgba(160, 130, 240, .07); }
+.pn-mark--reviewers.pn-mark--end::after{ color: rgba(205, 185, 255, .95); }
+.admin-users{ justify-self: stretch; display: grid; gap: 6px; }
