@@ -46,7 +46,7 @@
     return {
       canvas,
       seed,
-      size: int($('size'), 256, 2048, 768),
+      size: int($('size'), 512, 2048, 1280), // width; the height is half
       mode: $('mode').value || 'biomes',
       continentsMin: contMin,
       continentsMax: contMax,
@@ -77,6 +77,7 @@
     requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
       try {
         TerrainMap.render(opts);
+        keepMap();
         if (window.MapLegend) MapLegend.render(opts.mode);
       } catch (e) {
         console.error('map failed', e);
@@ -97,6 +98,58 @@
     if (busy) return;
     $('seed').value = 1 + Math.floor(Math.random() * 999999);
     generate();
+  });
+
+  // ---------- Dragging the map east-west ----------
+  // The world wraps around (terrain-map.js), so the map can be turned like a globe: the
+  // drawn map is kept in a copy and shown from viewOffset, the part that leaves one edge
+  // comes back at the other. map-hover.js reads TerrainMap.viewOffset.
+  let base = null;    // the whole map as drawn by TerrainMap.render
+  let offset = 0;     // map pixel shown at the left edge of the canvas
+
+  function keepMap() {
+    base = base || document.createElement('canvas');
+    base.width = canvas.width;
+    base.height = canvas.height;
+    base.getContext('2d').drawImage(canvas, 0, 0);
+    offset %= canvas.width; // the same world turned the same way after a new drawing
+    show();
+  }
+
+  function show() {
+    if (!base) return;
+    const n = base.width;
+    offset = ((offset % n) + n) % n;
+    const ctx = canvas.getContext('2d');
+    const o = Math.round(offset);
+    ctx.drawImage(base, -o, 0);
+    if (o) ctx.drawImage(base, n - o, 0);
+    TerrainMap.viewOffset = o;
+  }
+
+  let drag = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    if (busy || !base || e.button !== 0) return;
+    drag = { x: e.clientX, offset };
+    canvas.setPointerCapture?.(e.pointerId);
+    canvas.classList.add('is-dragging');
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const scale = canvas.width / canvas.getBoundingClientRect().width; // css px -> map px
+    offset = drag.offset - (e.clientX - drag.x) * scale;
+    show();
+  });
+  const stop = () => { drag = null; canvas.classList.remove('is-dragging'); };
+  canvas.addEventListener('pointerup', stop);
+  canvas.addEventListener('pointercancel', stop);
+  // keyboard: the map can be focused and turned with the arrow keys
+  canvas.tabIndex = 0;
+  canvas.addEventListener('keydown', (e) => {
+    if (!base || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    e.preventDefault();
+    offset += (e.key === 'ArrowRight' ? 1 : -1) * canvas.width / 24;
+    show();
   });
 
   showValues();

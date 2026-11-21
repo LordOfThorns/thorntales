@@ -40,12 +40,24 @@
     return n / 4294967296;
   }
 
-  // Value noise (grid) with smooth interpolation
-  function valueNoise2(x, y, seed) {
-    const x0 = Math.floor(x), y0 = Math.floor(y);
-    const x1 = x0 + 1, y1 = y0 + 1;
+  // The world wraps around east-west like a real planet: the left edge of the map
+  // continues at the right edge. Top and bottom are the poles and do not wrap.
+  // So every x coordinate is periodic: u = x / n is in [0, 1) and u = 1 is u = 0 again,
+  // noise repeats across the width, and neighbours of the first column are in the last.
+  function wrapX(x, n) { return ((x % n) + n) % n; }
+  // shortest signed east-west distance between two u in [0, 1)
+  function wrapD(du) { return du - Math.round(du); }
+
+  // Value noise (grid) with smooth interpolation.
+  // px > 0: the lattice repeats every px cells along x (seamless east-west)
+  function valueNoise2(x, y, seed, px) {
+    let x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    let x1 = x0 + 1;
+    const y1 = y0 + 1;
     const sx = smoothstep(x - x0);
     const sy = smoothstep(y - y0);
+    if (px) { x0 = wrapX(x0, px); x1 = (x0 + 1) % px; }
 
     const v00 = hash2i(x0, y0, seed);
     const v10 = hash2i(x1, y0, seed);
@@ -57,17 +69,23 @@
     return lerp(ix0, ix1, sy);
   }
 
-  // Fractal Brownian Motion (fBm)
-  function fbm(x, y, seed, octaves, lacunarity, gain) {
+  // Fractal Brownian Motion (fBm). px > 0: seamless east-west, the lattice of the first
+  // octave repeats every px cells (lacunarity must be a whole number for this)
+  function fbm(x, y, seed, octaves, lacunarity, gain, px) {
     let amp = 0.5;
     let freq = 1.0;
     let sum = 0.0;
     for (let i = 0; i < octaves; i++) {
-      sum += amp * valueNoise2(x * freq, y * freq, seed + i * 1013);
+      sum += amp * valueNoise2(x * freq, y * freq, seed + i * 1013, px ? px * freq : 0);
       freq *= lacunarity;
       amp *= gain;
     }
     return sum; // ~[0,1]
+  }
+
+  // Seamless fBm over the map: u in [0, 1) wraps, s = features across the map (whole number)
+  function wfbm(u, v, s, seed, octaves, gain = 0.5) {
+    return fbm(u * s * ASPECT, v * s, seed, octaves, 2.0, gain, s * ASPECT);
   }
   
   // -------------------- Wind --------------------
@@ -82,27 +100,29 @@
   const WIND_MEANDER = 0.35;
   const WIND_MERIDIONAL = 0.35;
 
-  function buildWindField(g, seed) {
-    const vx = new Float32Array(g * g);
-    const vy = new Float32Array(g * g);
-    const spd = new Float32Array(g * g);
+  // gh = grid height; the grid is ASPECT times wider, cells stay square
+  function buildWindField(gh, seed) {
+    const g = Math.round(gh * ASPECT); // grid width (the row length)
+    const vx = new Float32Array(g * gh);
+    const vy = new Float32Array(g * gh);
+    const spd = new Float32Array(g * gh);
 
     // Low frequency, 2 octaves: broad meanders only (high octaves made small eddies)
-    const psi = new Float32Array(g * g);
-    for (let y = 0; y < g; y++) {
+    const psi = new Float32Array(g * gh);
+    for (let y = 0; y < gh; y++) {
       for (let x = 0; x < g; x++) {
-        psi[idx(x, y, g)] = fbm((x / (g - 1)) * 2.2, (y / (g - 1)) * 2.2, seed + 2000, 2, 2.0, 0.45);
+        psi[idx(x, y, g)] = wfbm(x / g, y / (gh - 1), 2, seed + 2000, 2, 0.45);
       }
     }
 
     // curl(psi) is divergence free; scale it by its maximum
-    const cx = new Float32Array(g * g);
-    const cy = new Float32Array(g * g);
+    const cx = new Float32Array(g * gh);
+    const cy = new Float32Array(g * gh);
     let cmax = 1e-9;
-    for (let y = 0; y < g; y++) {
+    for (let y = 0; y < gh; y++) {
       for (let x = 0; x < g; x++) {
-        const xm = Math.max(0, x - 1), xp = Math.min(g - 1, x + 1);
-        const ym = Math.max(0, y - 1), yp = Math.min(g - 1, y + 1);
+        const xm = wrapX(x - 1, g), xp = wrapX(x + 1, g);
+        const ym = Math.max(0, y - 1), yp = Math.min(gh - 1, y + 1);
         const dx = psi[idx(xp, y, g)] - psi[idx(xm, y, g)];
         const dy = psi[idx(x, yp, g)] - psi[idx(x, ym, g)];
         const i = idx(x, y, g);
@@ -112,8 +132,8 @@
       }
     }
 
-    for (let y = 0; y < g; y++) {
-      const v = y / (g - 1);
+    for (let y = 0; y < gh; y++) {
+      const v = y / (gh - 1);
       const north = v < 0.5;
       const lat = Math.abs(v - 0.5) * 2;
 
@@ -136,17 +156,19 @@
       }
     }
 
-    return { g, vx, vy, spd };
+    return { g, gh, vx, vy, spd };
   }
 
+// u wraps east-west (u = x / width), v is clamped (v = y / (height - 1))
 function sampleWindBilinear(wind, u, v) {
   const g = wind.g;
-  const x = clamp(u * (g - 1), 0, g - 1);
-  const y = clamp(v * (g - 1), 0, g - 1);
+  const x = (u - Math.floor(u)) * g;
+  const gh = wind.gh || g;
+  const y = clamp(v * (gh - 1), 0, gh - 1);
 
-  const x0 = Math.floor(x), y0 = Math.floor(y);
-  const x1 = Math.min(x0 + 1, g - 1);
-  const y1 = Math.min(y0 + 1, g - 1);
+  const x0 = Math.floor(x) % g, y0 = Math.floor(y);
+  const x1 = (x0 + 1) % g;
+  const y1 = Math.min(y0 + 1, gh - 1);
 
   const tx = x - x0, ty = y - y0;
 
@@ -168,14 +190,21 @@ function sampleWindBilinear(wind, u, v) {
 }
 
 function sampleHeightNearest(h, n, u, v) {
-  const x = clamp((u * (n - 1) + 0.5) | 0, 0, n - 1);
-  const y = clamp((v * (n - 1) + 0.5) | 0, 0, n - 1);
+  const nh = h.length / n;
+  const x = wrapX(Math.floor(u * n + 0.5), n);
+  const y = clamp((v * (nh - 1) + 0.5) | 0, 0, nh - 1);
   return h[idx(x, y, n)];
 }
 
 
-  // 2D index helpers
+  // 2D index helpers. Maps are W x H (the world is twice as wide as it is high, like a
+  // map of a planet): in every function n is the WIDTH (the row length), the height is
+  // passed as nh or taken from an array (nh = array.length / n).
   function idx(x, y, n) { return y * n + x; }
+
+  // Width / height of the world. Noise and distances along x are scaled by it, so
+  // features stay round although u (0..1 across) covers twice the distance of v.
+  let ASPECT = 1;
 
   // Neighbors (8-connected)
   const N8 = [
@@ -186,8 +215,8 @@ function sampleHeightNearest(h, n, u, v) {
 
   // -------------------- Continents / base height --------------------
 
-  function buildHeightmap(n, seed, continentsMin, continentsMax) {
-    const h = new Float32Array(n * n);
+  function buildHeightmap(n, nh, seed, continentsMin, continentsMax) {
+    const h = new Float32Array(n * nh);
     const rng = mulberry32(seed);
 
     const cmin = Math.max(1, continentsMin | 0);
@@ -197,14 +226,18 @@ function sampleHeightNearest(h, n, u, v) {
     // Each continent is a chain of rotated, elongated blobs along a bending spine:
     // bulky in the middle, tapering to the ends (peninsulas). Sometimes a side branch
     // (a large peninsula) and sometimes a negative blob that bites out a bay or inland sea.
+    // Positions are in u (0..1 across the width) and v (0..1 down the height); sizes and
+    // steps are in v units, so moves along x are divided by ASPECT
     const blobs = [];
     for (let c = 0; c < continents; c++) {
-      const size = 0.08 + rng() * 0.10;
+      // the world is ASPECT times larger than a square one: continents grow by sqrt(ASPECT)
+      // so they cover the same share of it
+      const size = (0.08 + rng() * 0.10) * Math.sqrt(ASPECT);
       const w = 0.8 + rng() * 1.0;
       const nodes = 3 + ((rng() * 4) | 0);
       const step = size * 0.85;
       let dir = rng() * Math.PI * 2;
-      let x = 0.18 + rng() * 0.64 - Math.cos(dir) * step * (nodes - 1) / 2;
+      let x = rng() - Math.cos(dir) * step * (nodes - 1) / 2 / ASPECT; // anywhere east-west: the world wraps
       let y = 0.18 + rng() * 0.64 - Math.sin(dir) * step * (nodes - 1) / 2;
       const spine = [];
 
@@ -219,7 +252,7 @@ function sampleHeightNearest(h, n, u, v) {
         });
         spine.push({ x, y, dir, taper });
         dir += (rng() - 0.5) * 1.1;
-        x += Math.cos(dir) * step;
+        x += Math.cos(dir) * step / ASPECT;
         y += Math.sin(dir) * step;
       }
 
@@ -231,7 +264,7 @@ function sampleHeightNearest(h, n, u, v) {
         const parts = 2 + ((rng() * 2) | 0);
         for (let j = 1; j <= parts; j++) {
           const k = 1 - j / (parts + 1);
-          bx += Math.cos(bdir) * step * 0.7;
+          bx += Math.cos(bdir) * step * 0.7 / ASPECT;
           by += Math.sin(bdir) * step * 0.7;
           blobs.push({ x: bx, y: by, ang: bdir, rx: size * 0.55 * k + 0.01, ry: size * 0.32 * k + 0.008, w: w * 0.62 });
           bdir += (rng() - 0.5) * 0.8;
@@ -244,7 +277,7 @@ function sampleHeightNearest(h, n, u, v) {
         const side = rng() < 0.5 ? -1 : 1;
         const off = size * (0.3 + rng() * 0.5);
         blobs.push({
-          x: s.x + Math.cos(s.dir + side * Math.PI / 2) * off,
+          x: s.x + Math.cos(s.dir + side * Math.PI / 2) * off / ASPECT,
           y: s.y + Math.sin(s.dir + side * Math.PI / 2) * off,
           ang: s.dir, rx: size * (0.35 + rng() * 0.3), ry: size * (0.25 + rng() * 0.2), w: -w * 0.55,
         });
@@ -253,21 +286,21 @@ function sampleHeightNearest(h, n, u, v) {
     for (const b of blobs) { b.cos = Math.cos(b.ang); b.sin = Math.sin(b.ang); }
 
     function warp(u, v) {
-      const wx = fbm(u * 2.0, v * 2.0, seed + 900, 3, 2.0, 0.5) - 0.5;
-      const wy = fbm(u * 2.0, v * 2.0, seed + 901, 3, 2.0, 0.5) - 0.5;
-      return [u + wx * 0.10, v + wy * 0.10];
+      const wx = wfbm(u, v, 2, seed + 900, 3, 0.5) - 0.5;
+      const wy = wfbm(u, v, 2, seed + 901, 3, 0.5) - 0.5;
+      return [u + wx * 0.10 / ASPECT, v + wy * 0.10];
     }
 
-    for (let y = 0; y < n; y++) {
+    for (let y = 0; y < nh; y++) {
       for (let x = 0; x < n; x++) {
-        const u0 = x / (n - 1);
-        const v0 = y / (n - 1);
+        const u0 = x / n; // periodic east-west
+        const v0 = y / (nh - 1);
         const [u, v] = warp(u0, v0);
 
         let cont = 0;
         for (let k = 0; k < blobs.length; k++) {
           const b = blobs[k];
-          const dx = u - b.x, dy = v - b.y;
+          const dx = wrapD(u - b.x) * ASPECT, dy = v - b.y; // through the east-west seam, in v units
           const along = (dx * b.cos + dy * b.sin) / b.rx;
           const across = (-dx * b.sin + dy * b.cos) / b.ry;
           const q = along * along + across * across;
@@ -279,11 +312,11 @@ function sampleHeightNearest(h, n, u, v) {
         cont = clamp(cont, 0, 1);
         cont = Math.pow(cont, 1.35);
 
-        const shore = fbm(u * 6.0, v * 6.0, seed + 111, 5, 2.0, 0.5);
-        const shore2 = fbm(u * 18.0, v * 18.0, seed + 112, 4, 2.0, 0.5);
+        const shore = wfbm(u, v, 6, seed + 111, 5, 0.5);
+        const shore2 = wfbm(u, v, 18, seed + 112, 4, 0.5);
         const coast = clamp(cont + (shore - 0.5) * 0.22 + (shore2 - 0.5) * 0.10, 0, 1);
 
-        const d = fbm(u * 22.0, v * 22.0, seed + 30, 5, 2.0, 0.5);
+        const d = wfbm(u, v, 22, seed + 30, 5, 0.5);
         let height = 0.82 * coast + 0.18 * d;
 
         h[idx(x, y, n)] = height;
@@ -335,21 +368,21 @@ function sampleHeightNearest(h, n, u, v) {
   // The lookup position is domain-warped so edges wobble.
   const PLATE_WARP = 0.10;
 
-  function computePlateFields(n, plates, seed) {
-    const ids = new Int16Array(n * n);
-    const ids2 = new Int16Array(n * n);
-    const edge = new Float32Array(n * n);
+  function computePlateFields(n, nh, plates, seed) {
+    const ids = new Int16Array(n * nh);
+    const ids2 = new Int16Array(n * nh);
+    const edge = new Float32Array(n * nh);
 
-    for (let y = 0; y < n; y++) {
-      const v0 = y / (n - 1);
+    for (let y = 0; y < nh; y++) {
+      const v0 = y / (nh - 1);
       for (let x = 0; x < n; x++) {
-        const u0 = x / (n - 1);
-        const u = u0 + (fbm(u0 * 3, v0 * 3, seed + 610, 3, 2.0, 0.5) - 0.5) * 2 * PLATE_WARP;
-        const v = v0 + (fbm(u0 * 3, v0 * 3, seed + 611, 3, 2.0, 0.5) - 0.5) * 2 * PLATE_WARP;
+        const u0 = x / n; // periodic east-west
+        const u = u0 + (wfbm(u0, v0, 3, seed + 610, 3, 0.5) - 0.5) * 2 * PLATE_WARP / ASPECT;
+        const v = v0 + (wfbm(u0, v0, 3, seed + 611, 3, 0.5) - 0.5) * 2 * PLATE_WARP;
 
         let a = 0, b = 0, da = Infinity, db = Infinity;
         for (let k = 0; k < plates.length; k++) {
-          const dx = u - plates[k].x, dy = v - plates[k].y;
+          const dx = wrapD(u - plates[k].x) * ASPECT, dy = v - plates[k].y; // in v units
           const s = dx * dx + dy * dy - plates[k].r2;
           if (s < da) { db = da; b = a; da = s; a = k; }
           else if (s < db) { db = s; b = k; }
@@ -360,7 +393,7 @@ function sampleHeightNearest(h, n, u, v) {
         ids2[i] = b;
         // distance from p to the A|B power line
         const A = plates[a], B = plates[b];
-        const ab = Math.hypot(B.x - A.x, B.y - A.y) + 1e-9;
+        const ab = Math.hypot((wrapD(u - A.x) - wrapD(u - B.x)) * ASPECT, B.y - A.y) + 1e-9; // A and B as seen from here
         edge[i] = (db - da) / (2 * ab);
       }
     }
@@ -368,18 +401,19 @@ function sampleHeightNearest(h, n, u, v) {
     return { ids, ids2, edge };
   }
 
-  // Ridged multifractal noise: sharp crests with valleys between them, 0..~1
-  function ridged(x, y, seed, octaves) {
+  // Ridged multifractal noise: sharp crests with valleys between them, 0..~1.
+  // Seamless east-west: x = u * s, the lattice repeats every s cells (octaves double it)
+  function ridged(x, y, seed, octaves, s) {
     let sum = 0, amp = 0.5, freq = 1, weight = 1, norm = 0;
     for (let o = 0; o < octaves; o++) {
-      let r = 1 - Math.abs(2 * valueNoise2(x * freq, y * freq, seed + o * 131) - 1);
+      let r = 1 - Math.abs(2 * valueNoise2(x * freq, y * freq, seed + o * 131, s * freq) - 1);
       r *= r;
       r *= weight;
       weight = clamp(r * 1.6, 0, 1);
       sum += r * amp;
       norm += amp;
       amp *= 0.5;
-      freq *= 2.03;
+      freq *= 2;
     }
     return sum / norm;
   }
@@ -393,19 +427,20 @@ function sampleHeightNearest(h, n, u, v) {
   // Inside a belt, ridged noise makes separate crests, peaks and passes, and the belt
   // strength changes along the edge, so ranges have gaps and high sections.
   function buildUpliftMap(n, plates, plateFields, seed) {
+    const nh = plateFields.ids.length / n; // map height (n is the width)
     const { ids, ids2, edge } = plateFields;
-    const uplift = new Float32Array(n * n);
+    const uplift = new Float32Array(n * nh);
 
-    for (let y = 0; y < n; y++) {
-      const v = y / (n - 1);
+    for (let y = 0; y < nh; y++) {
+      const v = y / (nh - 1);
       for (let x = 0; x < n; x++) {
-        const u = x / (n - 1);
+        const u = x / n; // periodic east-west
         const i = idx(x, y, n);
         const d = edge[i];
         if (d > 0.16) continue;
 
         const A = plates[ids[i]], B = plates[ids2[i]];
-        let nx = B.x - A.x, ny = B.y - A.y;
+        let nx = wrapD(B.x - A.x) * ASPECT, ny = B.y - A.y;
         const inv = 1 / (Math.hypot(nx, ny) + 1e-9);
         nx *= inv; ny *= inv;
         const rvx = B.vx - A.vx, rvy = B.vy - A.vy;
@@ -413,14 +448,14 @@ function sampleHeightNearest(h, n, u, v) {
         const shear = Math.abs(rvx * -ny + rvy * nx);
 
         // belt strength and width vary along the edge
-        const along = fbm(u * 5, v * 5, seed + 520, 3, 2.0, 0.5);       // ~0.2..0.8
+        const along = wfbm(u, v, 5, seed + 520, 3, 0.5);       // ~0.2..0.8
         const strength = clamp((along - 0.25) * 2.2, 0.15, 1.3);
-        const width = 0.035 + 0.03 * fbm(u * 4, v * 4, seed + 521, 2, 2.0, 0.5);
+        const width = 0.035 + 0.03 * wfbm(u, v, 4, seed + 521, 2, 0.5);
 
         // crest detail; warped so ridges are not grid aligned
-        const wu = u + (fbm(u * 6, v * 6, seed + 530, 2, 2.0, 0.5) - 0.5) * 0.05;
-        const wv = v + (fbm(u * 6, v * 6, seed + 531, 2, 2.0, 0.5) - 0.5) * 0.05;
-        const crest = ridged(wu * 22, wv * 22, seed + 540, 5);         // ~0..1, crests ~10-30 px apart
+        const wu = u + (wfbm(u, v, 6, seed + 530, 2, 0.5) - 0.5) * 0.05 / ASPECT;
+        const wv = v + (wfbm(u, v, 6, seed + 531, 2, 0.5) - 0.5) * 0.05;
+        const crest = ridged(wu * 22 * ASPECT, wv * 22, seed + 540, 5, 22 * ASPECT);         // ~0..1, crests ~10-30 px apart
 
         let up = 0;
         if (conv > 0.05) {
@@ -478,29 +513,30 @@ function sampleHeightNearest(h, n, u, v) {
     }
   }
 
-  // Box blur into a new array with clamped edges
+  // Box blur into a new array: wraps east-west, clamped at the poles
   function blurred(src, n, radius) {
+    const nh = src.length / n; // map height (n is the width)
     const r = Math.max(0, radius | 0);
     if (r === 0) return Float32Array.from(src);
     const tmp = new Float32Array(src.length);
     const out = new Float32Array(src.length);
     const inv = 1 / (2 * r + 1);
 
-    for (let y = 0; y < n; y++) {
+    for (let y = 0; y < nh; y++) {
       const row = y * n;
       let sum = 0;
-      for (let k = -r; k <= r; k++) sum += src[row + clamp(k, 0, n - 1)];
+      for (let k = -r; k <= r; k++) sum += src[row + wrapX(k, n)];
       for (let x = 0; x < n; x++) {
         tmp[row + x] = sum * inv;
-        sum += src[row + Math.min(x + r + 1, n - 1)] - src[row + Math.max(x - r, 0)];
+        sum += src[row + wrapX(x + r + 1, n)] - src[row + wrapX(x - r, n)];
       }
     }
     for (let x = 0; x < n; x++) {
       let sum = 0;
-      for (let k = -r; k <= r; k++) sum += tmp[clamp(k, 0, n - 1) * n + x];
-      for (let y = 0; y < n; y++) {
+      for (let k = -r; k <= r; k++) sum += tmp[clamp(k, 0, nh - 1) * n + x];
+      for (let y = 0; y < nh; y++) {
         out[y * n + x] = sum * inv;
-        sum += tmp[Math.min(y + r + 1, n - 1) * n + x] - tmp[Math.max(y - r, 0) * n + x];
+        sum += tmp[Math.min(y + r + 1, nh - 1) * n + x] - tmp[Math.max(y - r, 0) * n + x];
       }
     }
     return out;
@@ -525,8 +561,9 @@ function sampleHeightNearest(h, n, u, v) {
 
   // Breadth-first distance (4-neighbour, in cells) from every cell where src is 1
   function bfsDistance(src, n, maxDist) {
-    const dist = new Int16Array(n * n).fill(-1);
-    const queue = new Int32Array(n * n);
+    const nh = src.length / n; // map height (n is the width)
+    const dist = new Int16Array(n * nh).fill(-1);
+    const queue = new Int32Array(n * nh);
     let qh = 0, qt = 0;
     for (let i = 0; i < src.length; i++) if (src[i]) { dist[i] = 0; queue[qt++] = i; }
     while (qh < qt) {
@@ -534,17 +571,20 @@ function sampleHeightNearest(h, n, u, v) {
       const d = dist[i];
       if (d >= maxDist) continue;
       const x = i % n, y = (i / n) | 0;
-      if (x > 0 && dist[i - 1] < 0) { dist[i - 1] = d + 1; queue[qt++] = i - 1; }
-      if (x < n - 1 && dist[i + 1] < 0) { dist[i + 1] = d + 1; queue[qt++] = i + 1; }
+      const l = x > 0 ? i - 1 : i + n - 1;   // east-west neighbours wrap
+      const r = x < n - 1 ? i + 1 : i - n + 1;
+      if (dist[l] < 0) { dist[l] = d + 1; queue[qt++] = l; }
+      if (dist[r] < 0) { dist[r] = d + 1; queue[qt++] = r; }
       if (y > 0 && dist[i - n] < 0) { dist[i - n] = d + 1; queue[qt++] = i - n; }
-      if (y < n - 1 && dist[i + n] < 0) { dist[i + n] = d + 1; queue[qt++] = i + n; }
+      if (y < nh - 1 && dist[i + n] < 0) { dist[i + n] = d + 1; queue[qt++] = i + n; }
     }
     return dist;
   }
 
   function shapeCoasts(h, n, seed, seaLevel) {
-    const N = n * n;
-    const px = n / 768;
+    const nh = h.length / n; // map height (n is the width)
+    const N = n * nh;
+    const px = nh / 768;
     const isSea = new Uint8Array(N), isLand = new Uint8Array(N);
     for (let i = 0; i < N; i++) { if (h[i] <= seaLevel) isSea[i] = 1; else isLand[i] = 1; }
     const reach = Math.ceil(Math.max(FJORD_REACH, SMOOTH_REACH, BAR_TO + 1) * px);
@@ -554,16 +594,16 @@ function sampleHeightNearest(h, n, u, v) {
     // Per cell: how cold (same bent latitude as computeTemperature) and which coast style
     const cold = new Float32Array(N);
     const smoothType = new Float32Array(N);
-    for (let y = 0; y < n; y++) {
-      const v = y / (n - 1);
+    for (let y = 0; y < nh; y++) {
+      const v = y / (nh - 1);
       for (let x = 0; x < n; x++) {
         const i = idx(x, y, n);
         if (toSea[i] < 0 && toLand[i] < 0) continue; // far from any coast
-        const u = x / (n - 1);
-        const warp = (fbm(u * 2.5, v * 2.5, seed + 800, 3, 2.0, 0.5) - 0.5) * 2 * TEMP_LAT_WARP;
+        const u = x / n; // periodic east-west
+        const warp = (wfbm(u, v, 3, seed + 800, 3, 0.5) - 0.5) * 2 * TEMP_LAT_WARP;
         const lat = clamp(Math.abs(v - 0.5) * 2.0 + warp, 0, 1);
         cold[i] = smoothstep(clamp((lat - 0.55) / 0.2, 0, 1));
-        smoothType[i] = smoothstep(clamp((fbm(u * 3, v * 3, seed + 1250, 3, 2.0, 0.5) - 0.48) * 5, 0, 1))
+        smoothType[i] = smoothstep(clamp((wfbm(u, v, 3, seed + 1250, 3, 0.5) - 0.48) * 5, 0, 1))
           * (1 - cold[i]);
       }
     }
@@ -571,16 +611,16 @@ function sampleHeightNearest(h, n, u, v) {
     // Fjords: narrow branching channels (ridge lines of ridged noise) cut into cold
     // mountainous coasts, deepest at the shore, fading inland
     const fjordReach = FJORD_REACH * px;
-    for (let y = 0; y < n; y++) {
-      const v = y / (n - 1);
+    for (let y = 0; y < nh; y++) {
+      const v = y / (nh - 1);
       for (let x = 0; x < n; x++) {
         const i = idx(x, y, n);
         const d = toSea[i];
         if (d <= 0 || d > fjordReach || cold[i] <= 0) continue;
         const relief = clamp((h[i] - seaLevel - 0.015) / 0.05, 0, 1); // hilly or mountainous coasts
         if (relief <= 0) continue;
-        const u = x / (n - 1);
-        const lines = ridged(u * 26, v * 26, seed + 1300, 3);
+        const u = x / n; // periodic east-west
+        const lines = ridged(u * 26 * ASPECT, v * 26, seed + 1300, 3, 26 * ASPECT);
         const channel = smoothstep(clamp((lines - 0.6) / 0.2, 0, 1));
         const fade = Math.pow(1 - d / fjordReach, 0.6);
         h[i] -= channel * fade * Math.sqrt(cold[i] * relief) * FJORD_DEPTH;
@@ -603,8 +643,8 @@ function sampleHeightNearest(h, n, u, v) {
 
     // Sand bars over shallow water in front of smooth coasts; gaps keep lagoons open
     const barFrom = BAR_FROM * px, barTo = BAR_TO * px;
-    for (let y = 0; y < n; y++) {
-      const v = y / (n - 1);
+    for (let y = 0; y < nh; y++) {
+      const v = y / (nh - 1);
       for (let x = 0; x < n; x++) {
         const i = idx(x, y, n);
         if (h[i] > seaLevel || smoothType[i] < 0.35) continue;
@@ -612,8 +652,8 @@ function sampleHeightNearest(h, n, u, v) {
         if (d < barFrom || d > barTo) continue;
         const depth = (seaLevel - h[i]) / seaLevel;
         if (depth > BAR_MAX_DEPTH) continue;
-        const u = x / (n - 1);
-        if (fbm(u * 40, v * 40, seed + 1270, 2, 2.0, 0.5) < 0.38) continue; // inlets
+        const u = x / n; // periodic east-west
+        if (wfbm(u, v, 40, seed + 1270, 2, 0.5) < 0.38) continue; // inlets
         h[i] = seaLevel + 0.003;
       }
     }
@@ -623,17 +663,18 @@ function sampleHeightNearest(h, n, u, v) {
   const MOUNTAINS_AT_SEA = 0.25;
 
   function shapeLand(h, n, seed, seaLevel) {
-    for (let y = 0; y < n; y++) {
-      const v = y / (n - 1);
+    const nh = h.length / n; // map height (n is the width)
+    for (let y = 0; y < nh; y++) {
+      const v = y / (nh - 1);
       for (let x = 0; x < n; x++) {
-        const u = x / (n - 1);
+        const u = x / n; // periodic east-west
         const i = idx(x, y, n);
         const e = h[i] - seaLevel;
         if (e <= 0) continue;
         const coastRise = 1 - Math.exp(-e / PLAINS_SCALE);             // 0 at coast -> 1 inland
-        const plateau = smoothstep(clamp((fbm(u * 2.5, v * 2.5, seed + 700, 3, 2.0, 0.5) - 0.45) * 4, 0, 1));
-        const hillMask = smoothstep(clamp((fbm(u * 4, v * 4, seed + 710, 2, 2.0, 0.5) - 0.4) * 3, 0, 1));
-        const hills = ridged(u * 16, v * 16, seed + 720, 4);
+        const plateau = smoothstep(clamp((wfbm(u, v, 3, seed + 700, 3, 0.5) - 0.45) * 4, 0, 1));
+        const hillMask = smoothstep(clamp((wfbm(u, v, 4, seed + 710, 2, 0.5) - 0.4) * 3, 0, 1));
+        const hills = ridged(u * 16 * ASPECT, v * 16, seed + 720, 4, 16 * ASPECT);
         h[i] = seaLevel + coastRise * (PLAINS_HEIGHT + PLATEAU_HEIGHT * plateau + HILLS_HEIGHT * hillMask * hills);
       }
     }
@@ -651,10 +692,11 @@ function sampleHeightNearest(h, n, u, v) {
   // Erosion is computed at half resolution (4x cheaper) and the removed material is
   // applied to the full map with bilinear interpolation, which also softens D8 steps.
   function streamErodeHalf(h, n, seaLevel, passes, k) {
-    if (n < 384) { streamErode(h, n, seaLevel, passes, k); return; }
-    const m = n >> 1;
-    const small = new Float32Array(m * m);
-    for (let y = 0; y < m; y++) {
+    const nh = h.length / n; // map height (n is the width)
+    if (nh < 384) { streamErode(h, n, seaLevel, passes, k); return; }
+    const m = n >> 1, mh = nh >> 1; // half width, half height
+    const small = new Float32Array(m * mh);
+    for (let y = 0; y < mh; y++) {
       for (let x = 0; x < m; x++) {
         const i = idx(x * 2, y * 2, n);
         small[idx(x, y, m)] = (h[i] + h[i + 1] + h[i + n] + h[i + n + 1]) * 0.25;
@@ -663,14 +705,15 @@ function sampleHeightNearest(h, n, u, v) {
     const before = Float32Array.from(small);
     // k is per cell; at half resolution cells are twice as long, flow counts 4x smaller
     streamErode(small, m, seaLevel, passes, k * 1.4);
-    for (let y = 0; y < n; y++) {
-      const v = clamp((y + 0.5) / 2 - 0.5, 0, m - 1);
-      const y0 = Math.floor(v), y1 = Math.min(y0 + 1, m - 1), ty = v - y0;
+    for (let y = 0; y < nh; y++) {
+      const v = clamp((y + 0.5) / 2 - 0.5, 0, mh - 1);
+      const y0 = Math.floor(v), y1 = Math.min(y0 + 1, mh - 1), ty = v - y0;
       for (let x = 0; x < n; x++) {
         const i = idx(x, y, n);
         if (h[i] <= seaLevel) continue;
-        const u = clamp((x + 0.5) / 2 - 0.5, 0, m - 1);
-        const x0 = Math.floor(u), x1 = Math.min(x0 + 1, m - 1), tx = u - x0;
+        const u = (x + 0.5) / 2 - 0.5;           // wraps east-west
+        const fx = Math.floor(u), tx = u - fx;
+        const x0 = wrapX(fx, m), x1 = (x0 + 1) % m;
         const d = (a, b) => small[idx(a, b, m)] - before[idx(a, b, m)];
         const delta = lerp(lerp(d(x0, y0), d(x1, y0), tx), lerp(d(x0, y1), d(x1, y1), tx), ty);
         h[i] = Math.max(seaLevel + 1e-4, h[i] + delta);
@@ -680,7 +723,7 @@ function sampleHeightNearest(h, n, u, v) {
 
   function streamErode(h, n, seaLevel, passes, k) {
     for (let p = 0; p < passes; p++) {
-      const { filled, order } = fillDepressions(h, n);
+      const { filled, order } = fillDepressions(h, n, seaLevel);
       const down = computeFlowDir(filled, n);
       const acc = computeFlowAccum(down, order);
       for (let i = 0; i < h.length; i++) {
@@ -695,35 +738,41 @@ function sampleHeightNearest(h, n, u, v) {
     }
   }
 
+  // Index of the neighbour (x + dx, y + dy): wraps east-west, -1 beyond a pole
+  function nbr(x, y, dx, dy, n, nh) {
+    const ny = y + dy;
+    if (ny < 0 || ny >= nh) return -1;
+    return ny * n + wrapX(x + dx, n);
+  }
+
   function thermalErode(h, n, iterations, talus) {
+    const nh = h.length / n; // map height (n is the width)
     const tmp = new Float32Array(h.length);
 
     for (let it = 0; it < iterations; it++) {
       tmp.set(h);
 
-      for (let y = 1; y < n - 1; y++) {
-        for (let x = 1; x < n - 1; x++) {
+      for (let y = 1; y < nh - 1; y++) {
+        for (let x = 0; x < n; x++) {          // every column: east-west wraps
           const i = idx(x, y, n);
           const hi = tmp[i];
 
           let maxDrop = 0;
-          let tx = 0, ty = 0;
+          let to = -1;
 
           for (let k = 0; k < 8; k++) {
-            const nx = x + N8[k][0];
-            const ny = y + N8[k][1];
-            const j = idx(nx, ny, n);
+            const j = nbr(x, y, N8[k][0], N8[k][1], n, nh);
             const drop = hi - tmp[j];
             if (drop > maxDrop) {
               maxDrop = drop;
-              tx = nx; ty = ny;
+              to = j;
             }
           }
 
           if (maxDrop > talus) {
             const move = (maxDrop - talus) * 0.25;
             h[i] -= move;
-            h[idx(tx, ty, n)] += move;
+            h[to] += move;
           }
         }
       }
@@ -741,8 +790,11 @@ function sampleHeightNearest(h, n, u, v) {
   // the order cells were processed in (non-decreasing height), used for accumulation.
   const FILL_EPSILON = 1e-7;
 
-  function fillDepressions(h, n) {
-    const size = n * n;
+  // Outlets (where water leaves the map): the polar rows and, when seaLevel is given,
+  // every cell of the sea. East and west are not edges any more: the world wraps.
+  function fillDepressions(h, n, seaLevel) {
+    const nh = h.length / n; // map height (n is the width)
+    const size = n * nh;
     const visited = new Uint8Array(size);
     const out = Float64Array.from(h);
     const order = new Int32Array(size);
@@ -795,11 +847,10 @@ function sampleHeightNearest(h, n, u, v) {
 
     for (let x = 0; x < n; x++) {
       markAndPush(idx(x, 0, n));
-      markAndPush(idx(x, n - 1, n));
+      markAndPush(idx(x, nh - 1, n));
     }
-    for (let y = 1; y < n - 1; y++) {
-      markAndPush(idx(0, y, n));
-      markAndPush(idx(n - 1, y, n));
+    if (seaLevel !== undefined) {
+      for (let i = n; i < size - n; i++) if (h[i] <= seaLevel) markAndPush(i);
     }
 
     while (heapSize > 0) {
@@ -809,11 +860,8 @@ function sampleHeightNearest(h, n, u, v) {
       const cy = (ci / n) | 0;
 
       for (let k = 0; k < 8; k++) {
-        const nx = cx + N8[k][0];
-        const ny = cy + N8[k][1];
-        if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
-        const ni = idx(nx, ny, n);
-        if (visited[ni]) continue;
+        const ni = nbr(cx, cy, N8[k][0], N8[k][1], n, nh);
+        if (ni < 0 || visited[ni]) continue;
         visited[ni] = 1;
 
         if (out[ni] <= ch) out[ni] = ch + FILL_EPSILON;
@@ -825,11 +873,12 @@ function sampleHeightNearest(h, n, u, v) {
   }
 
   function computeFlowDir(h, n) {
-    const down = new Int32Array(n * n);
+    const nh = h.length / n; // map height (n is the width)
+    const down = new Int32Array(n * nh);
     down.fill(-1);
 
-    for (let y = 1; y < n - 1; y++) {
-      for (let x = 1; x < n - 1; x++) {
+    for (let y = 1; y < nh - 1; y++) {
+      for (let x = 0; x < n; x++) {          // every column: east-west wraps
         const i = idx(x, y, n);
         const hi = h[i];
 
@@ -837,9 +886,7 @@ function sampleHeightNearest(h, n, u, v) {
         let bestH = hi;
 
         for (let k = 0; k < 8; k++) {
-          const nx = x + N8[k][0];
-          const ny = y + N8[k][1];
-          const j = idx(nx, ny, n);
+          const j = nbr(x, y, N8[k][0], N8[k][1], n, nh);
           const hj = h[j];
           if (hj < bestH) {
             bestH = hj;
@@ -885,18 +932,19 @@ function sampleHeightNearest(h, n, u, v) {
   const TEMP_LOCAL = 0.05;
 
   function computeTemperature(h, n, seaLevel, seed) {
-    const t = new Float32Array(n * n);
-    for (let y = 0; y < n; y++) {
-      const v = y / (n - 1);
+    const nh = h.length / n; // map height (n is the width)
+    const t = new Float32Array(n * nh);
+    for (let y = 0; y < nh; y++) {
+      const v = y / (nh - 1);
       for (let x = 0; x < n; x++) {
-        const u = x / (n - 1);
+        const u = x / n; // periodic east-west
         const i = idx(x, y, n);
         const height = h[i];
-        const warp = (fbm(u * 2.5, v * 2.5, seed + 800, 3, 2.0, 0.5) - 0.5) * 2 * TEMP_LAT_WARP;
+        const warp = (wfbm(u, v, 3, seed + 800, 3, 0.5) - 0.5) * 2 * TEMP_LAT_WARP;
         const lat = clamp(Math.abs(v - 0.5) * 2.0 + warp, 0, 1); // 0 equator -> 1 poles
         // base temperature curve (nonlinear: wider tropics) + local variation
         const base = 1.0 - Math.pow(lat, 1.2)
-          + (fbm(u * 8, v * 8, seed + 810, 2, 2.0, 0.5) - 0.5) * 2 * TEMP_LOCAL;
+          + (wfbm(u, v, 8, seed + 810, 2, 0.5) - 0.5) * 2 * TEMP_LOCAL;
 
         // altitude cooling (only above sea)
         const alt = Math.max(0, (height - seaLevel) / (1 - seaLevel + 1e-9));
@@ -929,8 +977,10 @@ function sampleHeightNearest(h, n, u, v) {
 
   function computeRain(h, n, seaLevel, temp, wind, desertStrength) {
     const ds = clamp(desertStrength ?? 0.35, 0, 1);
-    const cg = Math.min(n, 192);       // coarse grid size
-    const scale = n / cg;
+    const nh = h.length / n;           // map height (n is the width)
+    const cgh = Math.min(nh, 192);     // coarse grid: height, and square cells
+    const scale = nh / cgh;
+    const cg = Math.round(n / scale);  // coarse grid width (twice the height)
     const dt = 1.2;                    // coarse cells the air moves per step at speed 1
 
     const pBase = 0.003 + 0.016 * ds;  // more deserts -> land dries the air faster
@@ -943,10 +993,10 @@ function sampleHeightNearest(h, n, u, v) {
     const pRef = 0.0035 * (pBase / (0.003 + 0.016 * 0.35));
 
     // Coarse height (sea level as floor) and temperature
-    const H = new Float32Array(cg * cg);
-    const T = new Float32Array(cg * cg);
-    const land = new Uint8Array(cg * cg);
-    for (let y = 0; y < cg; y++) {
+    const H = new Float32Array(cg * cgh);
+    const T = new Float32Array(cg * cgh);
+    const land = new Uint8Array(cg * cgh);
+    for (let y = 0; y < cgh; y++) {
       const y0 = Math.floor(y * scale), y1 = Math.max(y0 + 1, Math.floor((y + 1) * scale));
       for (let x = 0; x < cg; x++) {
         const x0 = Math.floor(x * scale), x1 = Math.max(x0 + 1, Math.floor((x + 1) * scale));
@@ -967,13 +1017,13 @@ function sampleHeightNearest(h, n, u, v) {
     }
 
     // Wind displacement per step and orographic lift (wind . grad H)
-    const WX = new Float32Array(cg * cg);
-    const WY = new Float32Array(cg * cg);
-    const LIFT = new Float32Array(cg * cg);
-    for (let y = 0; y < cg; y++) {
+    const WX = new Float32Array(cg * cgh);
+    const WY = new Float32Array(cg * cgh);
+    const LIFT = new Float32Array(cg * cgh);
+    for (let y = 0; y < cgh; y++) {
       for (let x = 0; x < cg; x++) {
         const j = idx(x, y, cg);
-        const w = sampleWindBilinear(wind, x / (cg - 1), y / (cg - 1));
+        const w = sampleWindBilinear(wind, x / cg, y / (cgh - 1));
         WX[j] = w.vx * w.spd * dt;
         WY[j] = w.vy * w.spd * dt;
       }
@@ -983,10 +1033,10 @@ function sampleHeightNearest(h, n, u, v) {
     const oroR = OROGRAPHY_SMOOTH;
     const HS = oroR > 0 ? blurred(H, cg, oroR) : H;
     const oroK = oroR > 0 ? OROGRAPHY_GAIN : 1;
-    for (let y = 0; y < cg; y++) {
+    for (let y = 0; y < cgh; y++) {
       for (let x = 0; x < cg; x++) {
-        const xm = Math.max(0, x - 1), xp = Math.min(cg - 1, x + 1);
-        const ym = Math.max(0, y - 1), yp = Math.min(cg - 1, y + 1);
+        const xm = wrapX(x - 1, cg), xp = wrapX(x + 1, cg);
+        const ym = Math.max(0, y - 1), yp = Math.min(cgh - 1, y + 1);
         const gx = (HS[idx(xp, y, cg)] - HS[idx(xm, y, cg)]) * 0.5 * oroK;
         const gy = (HS[idx(x, yp, cg)] - HS[idx(x, ym, cg)]) * 0.5 * oroK;
         const j = idx(x, y, cg);
@@ -994,19 +1044,19 @@ function sampleHeightNearest(h, n, u, v) {
       }
     }
 
-    let Q = new Float32Array(cg * cg);   // moisture in the air
-    let Qn = new Float32Array(cg * cg);
-    const PR = new Float32Array(cg * cg); // precipitation per step
+    let Q = new Float32Array(cg * cgh);   // moisture in the air
+    let Qn = new Float32Array(cg * cgh);
+    const PR = new Float32Array(cg * cgh); // precipitation per step
     const evap = (j) => 0.35 + 0.65 * T[j];
     const capacity = (j) => 0.2 + 0.8 * T[j];
     for (let j = 0; j < Q.length; j++) Q[j] = land[j] ? 0 : evap(j);
 
     function sampleQ(u, v) {
-      // air coming from beyond the map edge is open-ocean air
-      if (u < 0 || v < 0 || u > cg - 1 || v > cg - 1) return 0.6;
-      const x0 = Math.floor(u), y0 = Math.floor(v);
-      const x1 = Math.min(x0 + 1, cg - 1), y1 = Math.min(y0 + 1, cg - 1);
-      const tx = u - x0, ty = v - y0;
+      // air from beyond a pole is open-ocean air; east-west it comes round the planet
+      if (v < 0 || v > cgh - 1) return 0.6;
+      const fx = Math.floor(u), y0 = Math.floor(v);
+      const tx = u - fx, ty = v - y0;
+      const x0 = wrapX(fx, cg), x1 = (x0 + 1) % cg, y1 = Math.min(y0 + 1, cgh - 1);
       return lerp(
         lerp(Q[idx(x0, y0, cg)], Q[idx(x1, y0, cg)], tx),
         lerp(Q[idx(x0, y1, cg)], Q[idx(x1, y1, cg)], tx),
@@ -1015,15 +1065,15 @@ function sampleHeightNearest(h, n, u, v) {
     }
 
     // Enough steps for air to cross the whole map
-    const iterations = Math.ceil((cg * 1.3) / dt);
+    const iterations = Math.ceil((cgh * 1.3) / dt);
     for (let it = 0; it < iterations; it++) {
-      for (let y = 0; y < cg; y++) {
+      for (let y = 0; y < cgh; y++) {
         for (let x = 0; x < cg; x++) {
           const j = idx(x, y, cg);
           let q = sampleQ(x - WX[j], y - WY[j]); // where this air was one step ago
           const nb = (
-            Q[idx(Math.max(0, x - 1), y, cg)] + Q[idx(Math.min(cg - 1, x + 1), y, cg)] +
-            Q[idx(x, Math.max(0, y - 1), cg)] + Q[idx(x, Math.min(cg - 1, y + 1), cg)]
+            Q[idx(wrapX(x - 1, cg), y, cg)] + Q[idx(wrapX(x + 1, cg), y, cg)] +
+            Q[idx(x, Math.max(0, y - 1), cg)] + Q[idx(x, Math.min(cgh - 1, y + 1), cg)]
           ) * 0.25;
           q = q * (1 - mix) + nb * mix;
 
@@ -1047,15 +1097,16 @@ function sampleHeightNearest(h, n, u, v) {
     }
 
     // Back to full resolution (bilinear over land cells only) and to a 0..1 index
-    const rain = new Float32Array(n * n);
-    for (let y = 0; y < n; y++) {
-      const v = clamp((y + 0.5) / scale - 0.5, 0, cg - 1);
-      const y0 = Math.floor(v), y1 = Math.min(y0 + 1, cg - 1), ty = v - y0;
+    const rain = new Float32Array(n * nh);
+    for (let y = 0; y < nh; y++) {
+      const v = clamp((y + 0.5) / scale - 0.5, 0, cgh - 1);
+      const y0 = Math.floor(v), y1 = Math.min(y0 + 1, cgh - 1), ty = v - y0;
       for (let x = 0; x < n; x++) {
         const i = idx(x, y, n);
         if (h[i] <= seaLevel) { rain[i] = 1; continue; }
-        const u = clamp((x + 0.5) / scale - 0.5, 0, cg - 1);
-        const x0 = Math.floor(u), x1 = Math.min(x0 + 1, cg - 1), tx = u - x0;
+        const u = (x + 0.5) / scale - 0.5;       // wraps east-west
+        const fx = Math.floor(u), tx = u - fx;
+        const x0 = wrapX(fx, cg), x1 = (x0 + 1) % cg;
         let s = 0, wsum = 0;
         const corners = [
           [idx(x0, y0, cg), (1 - tx) * (1 - ty)], [idx(x1, y0, cg), tx * (1 - ty)],
@@ -1075,10 +1126,11 @@ function sampleHeightNearest(h, n, u, v) {
   // -------------------- Rendering helpers --------------------
 
   function hillshade(h, n, x, y) {
-    const xm1 = clamp(x - 1, 0, n - 1);
-    const xp1 = clamp(x + 1, 0, n - 1);
-    const ym1 = clamp(y - 1, 0, n - 1);
-    const yp1 = clamp(y + 1, 0, n - 1);
+    const nh = h.length / n; // map height (n is the width)
+    const xm1 = wrapX(x - 1, n);
+    const xp1 = wrapX(x + 1, n);
+    const ym1 = clamp(y - 1, 0, nh - 1);
+    const yp1 = clamp(y + 1, 0, nh - 1);
 
     const dzdx = h[idx(xp1, y, n)] - h[idx(xm1, y, n)];
     const dzdy = h[idx(x, yp1, n)] - h[idx(x, ym1, n)];
@@ -1221,8 +1273,9 @@ function sampleHeightNearest(h, n, u, v) {
   }
 
   function rasterizeRivers(h, acc, down, n, seaLevel, threshold, lake, openSea, seed) {
-    const N = n * n;
-    const px = n / 768;
+    const nh = h.length / n; // map height (n is the width)
+    const N = n * nh;
+    const px = nh / 768;
     const out = new Float32Array(N);
     if (!down) return out;
 
@@ -1241,7 +1294,7 @@ function sampleHeightNearest(h, n, u, v) {
     for (let i = 0; i < N; i++) if (isRiver[i] && down[i] >= 0 && isRiver[down[i]]) hasDonor[down[i]] = 1;
 
     const canvas = document.createElement('canvas');
-    canvas.width = n; canvas.height = n;
+    canvas.width = n; canvas.height = nh;
     const g = canvas.getContext('2d');
     g.strokeStyle = '#fff';
     g.lineCap = 'round';
@@ -1262,7 +1315,17 @@ function sampleHeightNearest(h, n, u, v) {
       if (i >= 0) cells.push(i); // the junction, lake shore or sea cell we ran into
       if (cells.length < 2) continue;
 
-      let pts = cells.map((c) => ({ x: (c % n) + 0.5, y: ((c / n) | 0) + 0.5, f: flowT(acc[c]) }));
+      // a river may cross the east-west seam: unwrap x so the path stays continuous
+      // (it is drawn three times below, shifted by the map width, and clipped by the canvas)
+      let pts = [];
+      for (const c of cells) {
+        let x = (c % n) + 0.5;
+        if (pts.length) {
+          const prev = pts[pts.length - 1].x;
+          x += Math.round((prev - x) / n) * n;
+        }
+        pts.push({ x, y: ((c / n) | 0) + 0.5, f: flowT(acc[c]) });
+      }
       pts = chaikin(pts, 2);
 
       // length along the path, for the wave phase and the end taper
@@ -1277,11 +1340,10 @@ function sampleHeightNearest(h, n, u, v) {
         let tx = b.x - a.x, ty = b.y - a.y;
         const tl = Math.hypot(tx, ty) || 1;
         tx /= tl; ty /= tl;
-        const ci = idx(clamp(p.x | 0, 0, n - 1), clamp(p.y | 0, 0, n - 1), n);
-        const cx = ci % n, cy = (ci / n) | 0;
+        const cx = wrapX(Math.floor(p.x), n), cy = clamp(p.y | 0, 0, nh - 1);
         const slope = Math.hypot(
-          h[idx(Math.min(n - 1, cx + 1), cy, n)] - h[idx(Math.max(0, cx - 1), cy, n)],
-          h[idx(cx, Math.min(n - 1, cy + 1), n)] - h[idx(cx, Math.max(0, cy - 1), n)]
+          h[idx(wrapX(cx + 1, n), cy, n)] - h[idx(wrapX(cx - 1, n), cy, n)],
+          h[idx(cx, Math.min(nh - 1, cy + 1), n)] - h[idx(cx, Math.max(0, cy - 1), n)]
         ) * 0.5 / px;
         const flat = 1 - smoothstep(clamp(slope / MEANDER_FLAT_SLOPE, 0, 1));
         const wave = (8 + MEANDER_WAVE * p.f) * px;
@@ -1292,44 +1354,58 @@ function sampleHeightNearest(h, n, u, v) {
         return { x: p.x - ty * off, y: p.y + tx * off, f: p.f };
       });
 
-      for (let k = 1; k < bent.length; k++) {
-        const a = bent[k - 1], b = bent[k];
-        g.lineWidth = (0.9 + 2.1 * b.f) * px;
-        g.beginPath();
-        g.moveTo(a.x, a.y);
-        g.lineTo(b.x, b.y);
-        g.stroke();
+      for (const shift of [-n, 0, n]) {
+        for (let k = 1; k < bent.length; k++) {
+          const a = bent[k - 1], b = bent[k];
+          if (Math.max(a.x, b.x) + shift < -8 || Math.min(a.x, b.x) + shift > n + 8) continue;
+          g.lineWidth = (0.9 + 2.1 * b.f) * px;
+          g.beginPath();
+          g.moveTo(a.x + shift, a.y);
+          g.lineTo(b.x + shift, b.y);
+          g.stroke();
+        }
       }
     }
 
-    const data = g.getImageData(0, 0, n, n).data;
+    const data = g.getImageData(0, 0, n, nh).data;
     for (let i = 0; i < N; i++) out[i] = data[i * 4 + 3] / 255;
     return out;
   }
 
-  // 1 for cells at or below sea level that connect (4-neighbour) to the map edge
+  // 1 for open sea: connected water (4-neighbour, wrapping east-west) at or below sea level
+  // that reaches a pole, or is large. Now that east and west wrap, an ocean may circle the
+  // planet without touching any map edge; small enclosed basins stay lakes.
+  const OPEN_SEA_SHARE = 0.02; // a water body this large (share of the map) is sea anyway
+
   function connectedToEdge(h, n, seaLevel) {
-    const sea = new Uint8Array(n * n);
-    const queue = new Int32Array(n * n);
-    let qh = 0, qt = 0;
-    const push = (i) => { if (!sea[i] && h[i] <= seaLevel) { sea[i] = 1; queue[qt++] = i; } };
-    for (let k = 0; k < n; k++) {
-      push(idx(k, 0, n)); push(idx(k, n - 1, n));
-      push(idx(0, k, n)); push(idx(n - 1, k, n));
-    }
-    while (qh < qt) {
-      const i = queue[qh++];
-      const x = i % n, y = (i / n) | 0;
-      if (x > 0) push(i - 1);
-      if (x < n - 1) push(i + 1);
-      if (y > 0) push(i - n);
-      if (y < n - 1) push(i + n);
+    const nh = h.length / n; // map height (n is the width)
+    const N = n * nh;
+    const sea = new Uint8Array(N);
+    const seen = new Uint8Array(N);
+    const queue = new Int32Array(N);
+    const big = Math.max(64, N * OPEN_SEA_SHARE);
+    for (let s = 0; s < N; s++) {
+      if (seen[s] || h[s] > seaLevel) continue;
+      let qh = 0, qt = 0, pole = false;
+      seen[s] = 1;
+      queue[qt++] = s;
+      while (qh < qt) {
+        const i = queue[qh++];
+        const x = i % n, y = (i / n) | 0;
+        if (y === 0 || y === nh - 1) pole = true;
+        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+          const j = nbr(x, y, dx, dy, n, nh);
+          if (j >= 0 && !seen[j] && h[j] <= seaLevel) { seen[j] = 1; queue[qt++] = j; }
+        }
+      }
+      if (pole || qt >= big) for (let k = 0; k < qt; k++) sea[queue[k]] = 1;
     }
     return sea;
   }
 
   // Remove connected regions (8-neighbour) smaller than minArea from a 0/1 mask
   function dropSmallRegions(mask, n, minArea) {
+    const nh = mask.length / n; // map height (n is the width)
     const seen = new Uint8Array(mask.length);
     const stack = new Int32Array(mask.length);
     const region = [];
@@ -1344,10 +1420,8 @@ function sampleHeightNearest(h, n, u, v) {
         region.push(i);
         const x = i % n, y = (i / n) | 0;
         for (let k = 0; k < 8; k++) {
-          const nx = x + N8[k][0], ny = y + N8[k][1];
-          if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
-          const j = idx(nx, ny, n);
-          if (mask[j] && !seen[j]) { seen[j] = 1; stack[top++] = j; }
+          const j = nbr(x, y, N8[k][0], N8[k][1], n, nh);
+          if (j >= 0 && mask[j] && !seen[j]) { seen[j] = 1; stack[top++] = j; }
         }
       }
       if (region.length < minArea) for (const i of region) mask[i] = 0;
@@ -1384,10 +1458,11 @@ function sampleHeightNearest(h, n, u, v) {
   }
 
 function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf, seed, down) {
-  const img = ctx.createImageData(n, n);
+  const nh = h.length / n; // map height (n is the width)
+  const img = ctx.createImageData(n, nh);
   const data = img.data;
-  const N = n * n;
-  const px = n / 768; // scale effects with map size
+  const N = n * nh;
+  const px = nh / 768; // scale effects with map size
 
   // Sea = water below sea level that is connected to the map edge. Basins inside a
   // continent that dip below sea level are lakes, not sea (otherwise they got ocean
@@ -1434,17 +1509,17 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
   const jx = new Int32Array(N);
   const jy = new Int32Array(N);
   const jag = BORDER_JAG * px, jagF = BORDER_JAG_FINE * px;
-  for (let y = 0; y < n; y++) {
-    const v = y / (n - 1);
+  for (let y = 0; y < nh; y++) {
+    const v = y / (nh - 1);
     for (let x = 0; x < n; x++) {
       const i = idx(x, y, n);
-      const u = x / (n - 1);
-      const ox = (fbm(u * 30, v * 30, seed + 9110, 2, 2.0, 0.5) - 0.5) * 2 * jag
-               + (fbm(u * 95, v * 95, seed + 9111, 1, 2.0, 0.5) - 0.5) * 2 * jagF;
-      const oy = (fbm(u * 30, v * 30, seed + 9120, 2, 2.0, 0.5) - 0.5) * 2 * jag
-               + (fbm(u * 95, v * 95, seed + 9121, 1, 2.0, 0.5) - 0.5) * 2 * jagF;
-      const sx = clamp(Math.round(x + ox), 0, n - 1);
-      const sy = clamp(Math.round(y + oy), 0, n - 1);
+      const u = x / n; // periodic east-west
+      const ox = (wfbm(u, v, 30, seed + 9110, 2, 0.5) - 0.5) * 2 * jag
+               + (wfbm(u, v, 95, seed + 9111, 1, 0.5) - 0.5) * 2 * jagF;
+      const oy = (wfbm(u, v, 30, seed + 9120, 2, 0.5) - 0.5) * 2 * jag
+               + (wfbm(u, v, 95, seed + 9121, 1, 0.5) - 0.5) * 2 * jagF;
+      const sx = wrapX(Math.round(x + ox), n);
+      const sy = clamp(Math.round(y + oy), 0, nh - 1);
       const j = idx(sx, sy, n);
       // land never pulls a colour from the sea (water may pull from land: depth 0)
       jx[i] = land[i] && !land[j] ? x : sx;
@@ -1466,7 +1541,7 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
   const nearWater = blurred(land, n, Math.max(1, Math.round(3 * px)));
 
 
-  for (let y = 0; y < n; y++) {
+  for (let y = 0; y < nh; y++) {
     for (let x = 0; x < n; x++) {
       const i = idx(x, y, n);
       let r, g, b;
@@ -1575,21 +1650,21 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
 }
 
 
-function drawWindDebug(ctx, wind, n) {
-  ctx.clearRect(0, 0, n, n);
+function drawWindDebug(ctx, wind, n, nh) {
+  ctx.clearRect(0, 0, n, nh);
 
   // лёгкая сетка линий
   ctx.fillStyle = '#0b1020';
-  ctx.fillRect(0, 0, n, n);
+  ctx.fillRect(0, 0, n, nh);
 
-  const stepPx = Math.max(14, (n / 48) | 0);
+  const stepPx = Math.max(14, (nh / 48) | 0);
   ctx.strokeStyle = 'rgba(120, 255, 160, 0.65)';
   ctx.lineWidth = 1;
 
-  for (let y = stepPx; y < n; y += stepPx) {
+  for (let y = stepPx; y < nh; y += stepPx) {
     for (let x = stepPx; x < n; x += stepPx) {
-      const u = x / (n - 1);
-      const v = y / (n - 1);
+      const u = x / n; // periodic east-west
+      const v = y / (nh - 1);
       const w = sampleWindBilinear(wind, u, v);
 
       // speed 0.05..1.4: calm belts get short strokes
@@ -1659,14 +1734,15 @@ function biomeId(height, seaLevel, temp, rain, desertStrength, slope, wet, rise)
 }
 
 function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
+  const nh = h.length / n; // map height (n is the width)
   const out = new Int16Array(ids.length);
   const counts = new Int16Array(32); // хватит на небольшую палитру
 
   for (let it = 0; it < iterations; it++) {
     out.set(ids);
 
-    for (let y = 1; y < n - 1; y++) {
-      for (let x = 1; x < n - 1; x++) {
+    for (let y = 1; y < nh - 1; y++) {
+      for (let x = 0; x < n; x++) {          // every column: east-west wraps
         const i = idx(x, y, n);
         if (h[i] <= seaLevel) continue; // океан не трогаем
 
@@ -1674,7 +1750,7 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
 
         // текущий + 8 соседей
         for (let k = 0; k < 8; k++) {
-          const j = idx(x + N8[k][0], y + N8[k][1], n);
+          const j = nbr(x, y, N8[k][0], N8[k][1], n, nh);
           const id = ids[j];
           if (id > 0) counts[id]++;
         }
@@ -1705,7 +1781,10 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
     const canvas = opts.canvas;
     if (!canvas) throw new Error('TerrainMap.render: canvas is required');
 
-    const n = opts.size || 768;
+    // The world is twice as wide as it is high (like a map of a planet): size = width
+    const n = opts.size || 1280;
+    const nh = n >> 1;
+    ASPECT = n / nh;
     const seed = (opts.seed ?? 1337) | 0;
     const seaLevel = clamp(opts.seaLevel ?? 0.50, 0.05, 0.95);
     const riverThreshold = opts.riverThreshold ?? 600;
@@ -1717,18 +1796,18 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
     const windDir = (opts.windDir ?? 'W'); // 'W','E','N','S'
 
     canvas.width = n;
-    canvas.height = n;
+    canvas.height = nh;
     const ctx = canvas.getContext('2d', { alpha: false });
 
     // 1) Base height from continents
-    let h = buildHeightmap(n, seed, continentsMin, continentsMax);
+    let h = buildHeightmap(n, nh, seed, continentsMin, continentsMax);
 
     // 2) Land relief: lowlands, plateaus and hills instead of one dome per continent
     shapeLand(h, n, seed, seaLevel);
 
     // 3) Mountains, rifts and island arcs along plate edges
     const plates = generatePlates(seed, platesCount);
-    const plateFields = computePlateFields(n, plates, seed);
+    const plateFields = computePlateFields(n, nh, plates, seed);
     assignPlateTypes(plates, plateFields, h, seaLevel);
     const uplift = buildUpliftMap(n, plates, plateFields, seed);
 	const mountainsStrength = clamp(opts.mountainsStrength ?? 0.18, 0, 0.6);
@@ -1748,15 +1827,15 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
     // 5) Climate (before hydrology: river flow depends on rain)
     const temp = computeTemperature(h, n, seaLevel, seed);
 	const desertStrength = clamp(opts.desertStrength ?? 0.35, 0, 1);
-	const windGrid = buildWindField(Math.max(96, Math.min(160, (n / 6) | 0)), seed);
+	const windGrid = buildWindField(Math.max(64, Math.min(128, (nh / 6) | 0)), seed);
 
     // Absolute 0..1 index, no per-map min/max stretch (it used to amplify tiny differences)
     const rain = computeRain(h, n, seaLevel, temp, windGrid, desertStrength);
 
     // 6) Hydrology: fill depressions (with a tiny slope), D8 flow, rain-weighted accumulation
-    const { filled: hf, order: flowOrder } = fillDepressions(h, n);
+    const { filled: hf, order: flowOrder } = fillDepressions(h, n, seaLevel);
     const down = computeFlowDir(hf, n);
-    const runoff = new Float32Array(n * n);
+    const runoff = new Float32Array(n * nh);
     for (let i = 0; i < runoff.length; i++) {
       runoff[i] = h[i] > seaLevel ? RUNOFF_BASE + RUNOFF_RAIN * rain[i] : 0;
     }
@@ -1768,30 +1847,30 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
 	const mode = (opts.mode === 'height') ? 'height' : (opts.mode === 'wind' ? 'wind' : 'biomes');
 
 	if (mode === 'wind') {
-	  drawWindDebug(ctx, windGrid, n);
+	  drawWindDebug(ctx, windGrid, n, nh);
 	  return;
 	}
 	
-	const biomeIds = new Int16Array(n * n);
-	const slopeScale = n / 768;
+	const biomeIds = new Int16Array(n * nh);
+	const slopeScale = nh / 768;
 	// wetlands: along rivers on flat ground (was flow > 2x threshold and slope < 0.004,
 	// which almost never happened: 0.0% of land on 5 test seeds)
 	const wetFlow = Math.max(150, riverThreshold);
 	// a floodplain is a band a few px wide around the river (a 1 px strip was erased by
 	// the zone smoothing below)
-	const bigRiver = new Float32Array(n * n);
+	const bigRiver = new Float32Array(n * nh);
 	for (let i = 0; i < bigRiver.length; i++) if (h[i] > seaLevel && acc[i] > wetFlow) bigRiver[i] = 1;
 	const nearRiver = blurred(bigRiver, n, Math.max(2, Math.round(3 * slopeScale)));
 	// regional average height (sea counts as sea level) for the mountain moisture bonus
-	const hFloor = new Float32Array(n * n);
+	const hFloor = new Float32Array(n * nh);
 	for (let i = 0; i < hFloor.length; i++) hFloor[i] = Math.max(h[i], seaLevel);
 	const hRegion = blurred(hFloor, n, Math.max(4, Math.round(32 * slopeScale)));
 	const landRange = 1 - seaLevel + 1e-9;
-	for (let y = 0; y < n; y++) {
+	for (let y = 0; y < nh; y++) {
 	  for (let x = 0; x < n; x++) {
 	    const i = idx(x, y, n);
-	    const xm = Math.max(0, x - 1), xp = Math.min(n - 1, x + 1);
-	    const ym = Math.max(0, y - 1), yp = Math.min(n - 1, y + 1);
+	    const xm = wrapX(x - 1, n), xp = wrapX(x + 1, n); // east-west wraps
+	    const ym = Math.max(0, y - 1), yp = Math.min(nh - 1, y + 1);
 	    const slope = Math.hypot(h[idx(xp, y, n)] - h[idx(xm, y, n)], h[idx(x, yp, n)] - h[idx(x, ym, n)]) * 0.5 * slopeScale;
 	    const wet = nearRiver[i] > 0.05 && slope < 0.012;
 	    const rise = (h[i] - hRegion[i]) / landRange;
@@ -1803,6 +1882,7 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
 	window.TerrainMap.lastMode = mode;
 	window.TerrainMap.lastBiomeIds = biomeIds; // for the hover tooltip (0 = sea)
 	window.TerrainMap.lastSize = n;
+	window.TerrainMap.lastHeight = nh;
 	window.TerrainMap.lastHeights = h;
 	window.TerrainMap.lastSeaLevel = seaLevel;
 

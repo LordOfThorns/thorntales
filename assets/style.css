@@ -719,12 +719,16 @@ footer.wrap.bottom{
 #map{
   width: 100%;
   height: auto;
-  aspect-ratio: 5 / 4;
+  aspect-ratio: 2 / 1; /* a planet map: twice as wide as high */
   display: block;
   background: #0b1a2a; /* пока грузится */
   transition: filter .2s ease;
 }
 #map.is-busy{ filter: saturate(.5) brightness(.6); }
+#map{ cursor: grab; touch-action: pan-y; } /* drag east-west; vertical swipes still scroll the page */
+#map.is-dragging{ cursor: grabbing; }
+#map:focus-visible{ outline: 2px solid rgba(214, 178, 92, .6); outline-offset: 2px; }
+.map-hint{ margin: 8px 0 0; font-size: 13px; color: var(--faint); }
 
 /* пока карта рисуется: значок крутится CSS-трансформацией, она идёт и пока скрипт занят */
 .map-loading{

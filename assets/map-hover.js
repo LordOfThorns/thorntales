@@ -61,11 +61,14 @@
     if (!toggle.checked || (mode && mode.value === 'wind')) return hide();
 
     const rect = canvas.getBoundingClientRect();
-    const n = canvas.width;
+    const n = canvas.width, nh = canvas.height; // the world is twice as wide as high
     // the canvas may be stretched by CSS, so map x and y separately
-    const x = Math.floor(((e.clientX - rect.left) / rect.width) * n);
-    const y = Math.floor(((e.clientY - rect.top) / rect.height) * n);
-    if (x < 0 || y < 0 || x >= n || y >= n) return hide();
+    let x = Math.floor(((e.clientX - rect.left) / rect.width) * n);
+    const y = Math.floor(((e.clientY - rect.top) / rect.height) * nh);
+    if (x < 0 || y < 0 || x >= n || y >= nh) return hide();
+    // the map can be dragged east-west (terrain-page.js): the view starts at viewOffset
+    const off = (window.TerrainMap && TerrainMap.viewOffset) || 0;
+    x = (x + Math.round(off)) % n;
 
     const z = zoneAt(x, y);
     if (!z) return hide();
