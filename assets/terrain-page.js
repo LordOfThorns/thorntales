@@ -44,7 +44,7 @@
     const seed = int($('seed'), -2147483648, 2147483647, 6000);
     $('seed').value = seed;
     return {
-      canvas,
+      canvas: work, // drawn off screen, then shown through the window (show())
       seed,
       size: int($('size'), 512, 2048, 1280), // width; the height is half
       mode: $('mode').value || 'biomes',
@@ -77,7 +77,9 @@
     requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
       try {
         TerrainMap.render(opts);
-        keepMap();
+        base = work;
+        offset %= work.width; // the same world turned the same way after a new drawing
+        fit();
         if (window.MapLegend) MapLegend.render(opts.mode);
       } catch (e) {
         console.error('map failed', e);
@@ -100,19 +102,24 @@
     generate();
   });
 
-  // ---------- Dragging the map east-west ----------
-  // The world wraps around (terrain-map.js), so the map can be turned like a globe: the
-  // drawn map is kept in a copy and shown from viewOffset, the part that leaves one edge
-  // comes back at the other. map-hover.js reads TerrainMap.viewOffset.
+  // ---------- The window onto the world, dragged east-west ----------
+  // The world is twice as wide as high and wraps around (terrain-map.js). It is drawn
+  // off screen (work) and shown through a window as wide as the page and about as tall as
+  // the old square map: on a narrow screen only a part is seen and the rest is dragged in,
+  // like turning a globe. The window starts at map pixel viewOffset (read by map-hover.js).
+  const work = document.createElement('canvas');
   let base = null;    // the whole map as drawn by TerrainMap.render
-  let offset = 0;     // map pixel shown at the left edge of the canvas
+  let offset = 0;     // map pixel shown at the left edge of the window
 
-  function keepMap() {
-    base = base || document.createElement('canvas');
-    base.width = canvas.width;
-    base.height = canvas.height;
-    base.getContext('2d').drawImage(canvas, 0, 0);
-    offset %= canvas.width; // the same world turned the same way after a new drawing
+  function fit() {
+    const w = canvas.parentElement.clientWidth;
+    // tall enough to look at, within the screen, no taller than wide (phones get a square)
+    // and never so low that the world would be seen twice
+    const h = Math.round(Math.max(Math.min(800, w, Math.max(260, innerHeight * 0.75)), w / 2));
+    canvas.style.height = `${h}px`;
+    if (!base) return;
+    canvas.height = base.height;
+    canvas.width = Math.min(base.width, Math.round(base.height * w / h));
     show();
   }
 
@@ -123,9 +130,12 @@
     const ctx = canvas.getContext('2d');
     const o = Math.round(offset);
     ctx.drawImage(base, -o, 0);
-    if (o) ctx.drawImage(base, n - o, 0);
+    if (n - o < canvas.width) ctx.drawImage(base, n - o, 0); // the part past the seam
     TerrainMap.viewOffset = o;
   }
+
+  let resizeTimer = 0;
+  addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(fit, 100); });
 
   let drag = null;
   canvas.addEventListener('pointerdown', (e) => {
@@ -148,10 +158,11 @@
   canvas.addEventListener('keydown', (e) => {
     if (!base || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
     e.preventDefault();
-    offset += (e.key === 'ArrowRight' ? 1 : -1) * canvas.width / 24;
+    offset += (e.key === 'ArrowRight' ? 1 : -1) * base.width / 24;
     show();
   });
 
   showValues();
+  fit();
   generate();
 })();

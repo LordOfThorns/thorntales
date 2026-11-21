@@ -715,11 +715,14 @@ footer.wrap.bottom{
 
 .map-block{ position: relative; }
 .map-stage{ position: relative; }
+/* the map window takes the whole width of a wide screen; the rest stays a readable column */
+.wrap.map-page{ max-width: 1680px; }
+.map-page > .top, .map-page > .map-panel, .map-page > .bottom,
+.map-page .map-hint, .map-page .legend{ max-width: 948px; margin-left: auto; margin-right: auto; }
 
 #map{
   width: 100%;
-  height: auto;
-  aspect-ratio: 2 / 1; /* a planet map: twice as wide as high */
+  aspect-ratio: 2 / 1; /* until terrain-page.js sets the window height */
   display: block;
   background: #0b1a2a; /* пока грузится */
   transition: filter .2s ease;
