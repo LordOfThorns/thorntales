@@ -61,15 +61,18 @@
     if (!toggle.checked || (mode && mode.value === 'wind')) return hide();
 
     const rect = canvas.getBoundingClientRect();
-    // the canvas is a window onto the world (terrain-page.js): it shows canvas.width map
-    // pixels from viewOffset on, the world wraps east-west; CSS may stretch it
-    const vw = canvas.width, nh = canvas.height;
-    let x = Math.floor(((e.clientX - rect.left) / rect.width) * vw);
-    const y = Math.floor(((e.clientY - rect.top) / rect.height) * nh);
-    if (x < 0 || y < 0 || x >= vw || y >= nh) return hide();
-    const n = (window.TerrainMap && TerrainMap.lastSize) || vw; // world width
-    const off = (window.TerrainMap && TerrainMap.viewOffset) || 0;
-    x = (x + Math.round(off)) % n;
+    // the canvas is a window onto the world (terrain-page.js): TerrainMap.view says which
+    // map pixel is at its top-left corner and how many css px one map pixel takes;
+    // the world wraps east-west
+    const TM = window.TerrainMap;
+    const view = TM && TM.view;
+    const n = TM && TM.lastSize, nh = TM && TM.lastHeight;
+    if (!view || !n || !nh) return hide();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    if (cx < 0 || cy < 0 || cx >= rect.width || cy >= rect.height) return hide();
+    const x = ((Math.floor(view.ox + cx / view.scale) % n) + n) % n;
+    const y = Math.floor(view.oy + cy / view.scale);
+    if (y < 0 || y >= nh) return hide();
 
     const z = zoneAt(x, y);
     if (!z) return hide();

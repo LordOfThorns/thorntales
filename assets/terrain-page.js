@@ -77,9 +77,10 @@
     requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
       try {
         TerrainMap.render(opts);
+        if (work.width !== shownN) scale = 0; // another size: choose the scale again
+        shownN = work.width;
         base = work;
-        offset %= work.width; // the same world turned the same way after a new drawing
-        fit();
+        draw();
         if (window.MapLegend) MapLegend.render(opts.mode);
       } catch (e) {
         console.error('map failed', e);
@@ -102,67 +103,133 @@
     generate();
   });
 
-  // ---------- The window onto the world, dragged east-west ----------
-  // The world is twice as wide as high and wraps around (terrain-map.js). It is drawn
-  // off screen (work) and shown through a window as wide as the page and about as tall as
-  // the old square map: on a narrow screen only a part is seen and the rest is dragged in,
-  // like turning a globe. The window starts at map pixel viewOffset (read by map-hover.js).
+  // ---------- The window onto the world ----------
+  // The world is twice as wide as high and wraps around (terrain-map.js). It is drawn off
+  // screen (work) and shown through a window (.map-stage): as wide as the page and about as
+  // tall as the old square map. The reader can drag the map inside it (east-west it never
+  // ends, north-south it stops at the poles), resize the window by its bottom-right corner
+  // (CSS resize) and switch to the zoomed-out view, where the whole world fits the old width.
+  // TerrainMap.view = { ox, oy, scale } (map pixel at the top-left corner, css px per map
+  // pixel) is read by map-hover.js.
   const work = document.createElement('canvas');
-  let base = null;    // the whole map as drawn by TerrainMap.render
-  let offset = 0;     // map pixel shown at the left edge of the window
+  const stage = canvas.parentElement;
+  const zoomBtn = $('zoomToggle');
+  const COLUMN = 948;   // width of the page column, the old width of the map
+  let base = null;      // the whole map as drawn by TerrainMap.render
+  let ox = 0, oy = 0;   // map pixel shown at the top-left corner of the window
+  let scale = 0;        // css px per map pixel; 0 = choose for the current layout
+  let zoomedOut = false;
+  let shownN = 0;       // width of the map now shown
 
-  function fit() {
-    const w = canvas.parentElement.clientWidth;
-    // tall enough to look at, within the screen, no taller than wide (phones get a square)
-    // and never so low that the world would be seen twice
-    const h = Math.round(Math.max(Math.min(800, w, Math.max(260, innerHeight * 0.75)), w / 2));
-    canvas.style.height = `${h}px`;
-    if (!base) return;
-    canvas.height = base.height;
-    canvas.width = Math.min(base.width, Math.round(base.height * w / h));
-    show();
+  // Window size for the current mode (forgets a size the reader set by hand)
+  function layout() {
+    const full = stage.parentElement.clientWidth;
+    if (zoomedOut) {
+      const w = Math.min(full, COLUMN);
+      stage.style.width = `${w}px`;
+      stage.style.height = `${Math.round(w / 2)}px`;
+    } else {
+      // tall enough to look at, within the screen, no taller than wide (phones get a square)
+      // and never so low that the world would be seen twice
+      const h = Math.max(Math.min(800, full, Math.max(260, innerHeight * 0.75)), full / 2);
+      stage.style.width = '';
+      stage.style.height = `${Math.round(h)}px`;
+    }
+    scale = 0;
+    if (zoomBtn) {
+      zoomBtn.dataset.i18n = zoomedOut ? 'terrain.zoomIn' : 'terrain.zoomOut';
+      if (window.I18n) zoomBtn.textContent = I18n.t(zoomBtn.dataset.i18n);
+    }
+    draw();
   }
 
-  function show() {
-    if (!base) return;
-    const n = base.width;
-    offset = ((offset % n) + n) % n;
+  function draw() {
+    const w = stage.clientWidth, h = stage.clientHeight;
+    const dpr = window.devicePixelRatio || 1;
+    const cw = Math.max(1, Math.round(w * dpr)), ch = Math.max(1, Math.round(h * dpr));
+    if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+    if (!base || !w || !h) return;
+    const n = base.width, nh = base.height;
+    if (!scale) scale = zoomedOut ? w / n : h / nh;
+    scale = Math.max(scale, w / n); // never show the world twice side by side
+    // a window taller than the map shrinks to it
+    if (h > nh * scale + 1) { stage.style.height = `${Math.floor(nh * scale)}px`; return; }
+    const viewW = w / scale, viewH = h / scale;
+    ox = ((ox % n) + n) % n;
+    oy = Math.max(0, Math.min(nh - viewH, oy));
     const ctx = canvas.getContext('2d');
-    const o = Math.round(offset);
-    ctx.drawImage(base, -o, 0);
-    if (n - o < canvas.width) ctx.drawImage(base, n - o, 0); // the part past the seam
-    TerrainMap.viewOffset = o;
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(base, -ox, -oy);
+    if (n - ox < viewW) ctx.drawImage(base, n - ox, -oy); // the part past the seam
+    TerrainMap.view = { ox, oy, scale };
   }
 
+  // the window follows the page width, the reader's resizing and its own height changes
+  if (window.ResizeObserver) new ResizeObserver(() => draw()).observe(stage);
   let resizeTimer = 0;
-  addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(fit, 100); });
+  addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (zoomedOut) layout(); else draw(); }, 100);
+  });
+
+  if (zoomBtn) zoomBtn.addEventListener('click', () => { zoomedOut = !zoomedOut; layout(); });
+
+  // the corner grip: the reader makes the window smaller or larger (the map keeps its scale)
+  const grip = document.createElement('span');
+  grip.className = 'map-resize';
+  grip.setAttribute('aria-hidden', 'true');
+  stage.appendChild(grip);
+  let sizing = null;
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    sizing = { x: e.clientX, y: e.clientY, w: stage.offsetWidth, h: stage.offsetHeight };
+    grip.setPointerCapture?.(e.pointerId);
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (!sizing) return;
+    const full = stage.parentElement.clientWidth;
+    // the window stays centred, so the width changes twice as fast as the pointer moves
+    const w = Math.max(200, Math.min(full, sizing.w + (e.clientX - sizing.x) * 2));
+    const h = Math.max(140, sizing.h + (e.clientY - sizing.y));
+    stage.style.width = w >= full ? '' : `${Math.round(w)}px`;
+    stage.style.height = `${Math.round(h)}px`;
+    draw();
+  });
+  const endSizing = () => { sizing = null; };
+  grip.addEventListener('pointerup', endSizing);
+  grip.addEventListener('pointercancel', endSizing);
 
   let drag = null;
   canvas.addEventListener('pointerdown', (e) => {
     if (busy || !base || e.button !== 0) return;
-    drag = { x: e.clientX, offset };
+    drag = { x: e.clientX, y: e.clientY, ox, oy };
     canvas.setPointerCapture?.(e.pointerId);
     canvas.classList.add('is-dragging');
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!drag) return;
-    const scale = canvas.width / canvas.getBoundingClientRect().width; // css px -> map px
-    offset = drag.offset - (e.clientX - drag.x) * scale;
-    show();
+    ox = drag.ox - (e.clientX - drag.x) / scale;
+    oy = drag.oy - (e.clientY - drag.y) / scale;
+    draw();
   });
   const stop = () => { drag = null; canvas.classList.remove('is-dragging'); };
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
-  // keyboard: the map can be focused and turned with the arrow keys
+  // keyboard: the map can be focused and moved with the arrow keys
   canvas.tabIndex = 0;
+  const KEYS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   canvas.addEventListener('keydown', (e) => {
-    if (!base || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    const k = KEYS[e.key];
+    if (!base || !k) return;
     e.preventDefault();
-    offset += (e.key === 'ArrowRight' ? 1 : -1) * base.width / 24;
-    show();
+    ox += k[0] * base.width / 24;
+    oy += k[1] * base.height / 12;
+    draw();
   });
 
   showValues();
-  fit();
+  layout();
   generate();
 })();
