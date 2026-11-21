@@ -10,120 +10,108 @@
   <meta property="og:image" content="https://www.thorntales.net/assets/preview.png">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title data-i18n="nav.mapGen">Генератор карт · Thorntales</title>
-  <link rel="stylesheet" href="/assets/style.css?v=66" />
+  <link rel="stylesheet" href="/assets/style.css?v=67" />
 </head>
 <body data-page="mapGen">
-  <main class="wrap">
+  <main class="wrap map-page">
     <header class="top">
       <h1 data-i18n="nav.mapGen">Генератор карт</h1>
-      <p class="sub" data-i18n="terrain.sub">Странная карта несуществующего мира. Измените seed чтобы поменять случайную генерацию.</p>
+      <p class="sub" data-i18n="terrain.sub">Странная карта несуществующего мира. У каждого зерна свой мир: поменяйте его или нажмите «Случайное», настройте море, реки, горы и пустыни и нажмите «Сгенерировать».</p>
     </header>
 
-<div class="map-block">
+    <form class="panel map-panel" id="mapForm">
+      <div class="map-panel__grid">
+        <label class="field map-field map-field--seed">
+          <span class="field__label" data-i18n="terrain.seed">Зерно мира</span>
+          <span class="map-seed">
+            <input class="input" id="seed" type="number" value="6000" step="1">
+            <button class="btn btn--ghost" type="button" id="seedRandom" data-i18n="terrain.random">Случайное</button>
+          </span>
+          <span class="field__hint" data-i18n="terrain.seedHint">Одно и то же зерно — та же карта</span>
+        </label>
 
-  <div class="map-controls">
-    <label>Seed
-      <input id="seed" type="number" value="6000">
-    </label>
+        <label class="field map-field">
+          <span class="field__label" data-i18n="terrain.size">Размер</span>
+          <select class="input" id="size">
+            <option value="512" data-i18n="terrain.sizeSmall">маленькая — быстро</option>
+            <option value="768" selected data-i18n="terrain.sizeMedium">средняя</option>
+            <option value="1024" data-i18n="terrain.sizeLarge">большая — дольше</option>
+          </select>
+        </label>
 
-    <label>Size
-      <select id="size">
-        <option>512</option>
-        <option selected>768</option>
-        <option>1024</option>
-      </select>
-    </label>
-	
-	<label>Mode
-  <select id="mode">
-    <option value="biomes" selected>Biomes</option>
-    <option value="height">Height</option>
-	<option value="wind">Wind</option>
-  </select>
-</label>
+        <label class="field map-field">
+          <span class="field__label" data-i18n="terrain.mode">Вид карты</span>
+          <select class="input" id="mode">
+            <option value="biomes" selected data-i18n="terrain.modeBiomes">Природные зоны</option>
+            <option value="height" data-i18n="terrain.modeHeight">Высоты</option>
+            <option value="wind" data-i18n="terrain.modeWind">Ветра</option>
+          </select>
+        </label>
 
-    <label>Continents
-      <input id="contMin" type="number" min="1" max="10" value="2">
-      –
-      <input id="contMax" type="number" min="1" max="10" value="6">
-    </label>
+        <div class="field map-field">
+          <span class="field__label" data-i18n="terrain.continents">Континентов</span>
+          <span class="map-range2">
+            <span data-i18n="terrain.from">от</span>
+            <input class="input" id="contMin" type="number" min="1" max="10" value="2" aria-label="min">
+            <span data-i18n="terrain.to">до</span>
+            <input class="input" id="contMax" type="number" min="1" max="10" value="6" aria-label="max">
+          </span>
+        </div>
 
-    <label>Sea
-      <input id="sea" type="number" step="0.01" min="0.05" max="0.95" value="0.30">
-    </label>
+        <label class="field map-field">
+          <span class="field__label"><span data-i18n="terrain.sea">Море</span> <output class="map-val" id="seaOut"></output></span>
+          <input class="map-slider" id="sea" type="range" min="5" max="95" step="1" value="30">
+          <span class="map-scale"><span data-i18n="terrain.less">меньше</span><span data-i18n="terrain.more">больше</span></span>
+        </label>
 
-    <label>Rivers
-      <input id="rivers" type="number" value="600">
-    </label>
-	
-	<label>Mountains
-  <input id="mount" type="number" step="0.01" min="0" max="0.6" value="0.18">
-</label>
+        <label class="field map-field">
+          <span class="field__label"><span data-i18n="terrain.rivers">Реки</span> <output class="map-val" id="riversOut"></output></span>
+          <input class="map-slider" id="rivers" type="range" min="0" max="100" step="1" value="78">
+          <span class="map-scale"><span data-i18n="terrain.few">мало</span><span data-i18n="terrain.many">много</span></span>
+        </label>
 
-<label>Deserts
-  <input id="desert" type="number" step="0.01" min="0" max="1" value="0.35">
-</label>
+        <label class="field map-field">
+          <span class="field__label"><span data-i18n="terrain.mountains">Горы</span> <output class="map-val" id="mountOut"></output></span>
+          <input class="map-slider" id="mount" type="range" min="0" max="100" step="1" value="30">
+          <span class="map-scale"><span data-i18n="terrain.flat">равнины</span><span data-i18n="terrain.peaks">хребты</span></span>
+        </label>
 
-    <label class="map-hover-toggle"><input type="checkbox" id="hoverZones"> <span data-i18n="map.hover">Зона под курсором</span></label>
+        <label class="field map-field">
+          <span class="field__label"><span data-i18n="terrain.deserts">Пустыни</span> <output class="map-val" id="desertOut"></output></span>
+          <input class="map-slider" id="desert" type="range" min="0" max="100" step="1" value="35">
+          <span class="map-scale"><span data-i18n="terrain.wet">влажно</span><span data-i18n="terrain.dry">сухо</span></span>
+        </label>
+      </div>
 
-    <button id="gen">Generate</button>
-  </div>
+      <div class="map-panel__foot">
+        <label class="map-hover-toggle"><input type="checkbox" id="hoverZones"> <span data-i18n="map.hover">Зона под курсором</span></label>
+        <button class="btn btn--primary map-gen" type="submit" id="gen" data-i18n="terrain.generate">Сгенерировать</button>
+      </div>
+    </form>
 
-  <canvas id="map"></canvas>
-  <div class="map-tip" id="mapTip" hidden></div>
-  <section class="legend" id="legend" aria-live="polite"></section>
-
-</div>
-
-<script src="/assets/terrain-map.js?v=35"></script>
-<script>
-  function gen() {
-    const seed = parseInt(document.getElementById('seed').value, 10) || 6000;
-    const size = parseInt(document.getElementById('size').value, 10) || 768;
-    let contMin = parseInt(document.getElementById('contMin').value, 10) || 2;
-	let riverThreshold = parseInt(document.getElementById('rivers').value, 10) || 600;
-	let mountainsStrength = parseFloat(document.getElementById('mount').value) || 0.18;
-	let desertStrength = parseFloat(document.getElementById('desert').value) || 0.35;
-    let contMax = parseInt(document.getElementById('contMax').value, 10) || 6;
-    contMin = Math.max(1, Math.min(contMin, 12));
-    contMax = Math.max(contMin, Math.min(contMax, 12));
-	let seaLevel = parseFloat(document.getElementById('sea').value) || 0.30;
-	const mode = document.getElementById('mode').value || 'biomes';
-	
-	
-	
-	TerrainMap.render({
-	  canvas: document.getElementById('map'),
-	  size,
-	  seed,
-	  seaLevel,
-	  riverThreshold,
-	  continentsMin: contMin,
-	  continentsMax: contMax,
-	  plates: 18,     // попробуй 12..24
-	  windDir: 'W',   // 'W'|'E'|'N'|'S'
-	  mountainsStrength,
-	  desertStrength,
-	  mode,
-	});
-	if (window.MapLegend) MapLegend.render(mode);
-  }
-  
-  
-
-  document.getElementById('gen').addEventListener('click', gen);
-  gen();
-</script>
+    <div class="map-block">
+      <div class="map-stage">
+        <canvas id="map"></canvas>
+        <div class="map-loading" id="mapLoading" hidden>
+          <span class="map-loading__spin" aria-hidden="true"></span>
+          <span class="map-loading__text" data-i18n="terrain.drawing">Рисую карту…</span>
+        </div>
+        <div class="map-tip" id="mapTip" hidden></div>
+      </div>
+      <section class="legend" id="legend" aria-live="polite"></section>
+    </div>
 
     <footer class="bottom">
       <small>© 2026</small>
     </footer>
   </main>
 
-  <script src="/assets/i18n.js?v=33"></script>
+  <script src="/assets/i18n.js?v=34"></script>
   <script src="/assets/layout.js?v=7"></script>
+  <script src="/assets/terrain-map.js?v=35"></script>
   <script src="/assets/map-legend.js?v=4"></script>
   <script src="/assets/map-hover.js?v=2"></script>
+  <script src="/assets/terrain-page.js?v=1"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
   <script src="/assets/auth.js?v=2"></script>
 </body>

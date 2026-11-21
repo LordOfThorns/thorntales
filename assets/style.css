@@ -678,51 +678,82 @@ footer.wrap.bottom{
    КАРТА (terrain.html)
    ===================================================== */
 
-.map-block{
-  position: relative;
-  width: 70vw;
-  max-width: 1200px;
-  margin: 40px auto;
+/* панель настроек над картой */
+.map-panel{
+  display: grid;
+  gap: 16px;
+  margin: 0 0 18px;
 }
+.map-panel__grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 16px 22px;
+}
+.map-field{ min-width: 0; align-content: start; }
+.map-field--seed{ grid-column: span 2; }
+.map-seed{ display: flex; gap: 8px; }
+.map-seed .input{ flex: 1 1 auto; min-width: 0; }
+.map-seed .btn{ justify-self: auto; flex: 0 0 auto; padding: 8px 14px; border-color: rgba(255,255,255,.18); }
+.map-range2{ display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.map-range2 .input{ width: 68px; padding: 8px 8px; }
+.map-val{ margin-left: 4px; font-weight: 650; color: rgba(240, 214, 140, .95); }
+.map-slider{ width: 100%; margin: 4px 0 0; accent-color: #d6b25c; cursor: pointer; }
+.map-scale{ display: flex; justify-content: space-between; font-size: 12px; color: var(--faint); }
+.map-panel__foot{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255,255,255,.07);
+}
+.map-hover-toggle{ display: inline-flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); cursor: pointer; }
+.map-hover-toggle input{ width: 16px; height: 16px; margin: 0; accent-color: #d6b25c; }
+.map-gen{ justify-self: auto; padding: 10px 26px; font-size: 16px; }
+.map-gen:disabled{ cursor: progress; }
+
+.map-block{ position: relative; }
+.map-stage{ position: relative; }
 
 #map{
-  width: 80%;
+  width: 100%;
   height: auto;
   aspect-ratio: 5 / 4;
   display: block;
   background: #0b1a2a; /* пока грузится */
+  transition: filter .2s ease;
 }
+#map.is-busy{ filter: saturate(.5) brightness(.6); }
 
-.map-controls{
+/* пока карта рисуется: значок крутится CSS-трансформацией, она идёт и пока скрипт занят */
+.map-loading{
   position: absolute;
-  top: 16px;
-  left: 16px;
-  z-index: 5;
+  inset: 0;
+  z-index: 7;
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px 14px;
+  flex-direction: column;
   align-items: center;
-  padding: 10px 14px;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(6px);
-  border-radius: 10px;
-  color: #fff;
-  font-size: 14px;
+  justify-content: center;
+  gap: 14px;
+  color: var(--ink);
+  font-size: 15px;
+  text-shadow: 0 1px 8px rgba(0,0,0,.8);
+  pointer-events: none;
 }
-
-.map-controls label{
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
+.map-loading[hidden]{ display: none; }
+.map-loading__spin{
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 3px solid rgba(214, 178, 92, .22);
+  border-top-color: rgba(240, 214, 140, .95);
+  animation: map-spin .85s linear infinite;
+  will-change: transform;
 }
-
-.map-controls input,
-.map-controls select{ width: 70px; }
-
-.map-controls button{
-  padding: 4px 10px;
-  cursor: pointer;
+@keyframes map-spin{ to{ transform: rotate(360deg); } }
+@media (max-width: 520px){
+  .map-field--seed{ grid-column: auto; }
 }
 
 
@@ -1677,7 +1708,7 @@ textarea.input{
    ===================================================== */
 
 .legend{
-  width: 80%;
+  width: 100%;
   margin-top: 16px;
   padding: 14px 18px 16px;
   border-radius: 16px;
@@ -1764,7 +1795,7 @@ textarea.input{
 .legend__list--after-ramp{ margin-top: 10px; }
 
 /* Zone under cursor (terrain.html) */
-.map-controls .map-hover-toggle input{ width: auto; }
+
 
 .map-tip{
   position: absolute;
