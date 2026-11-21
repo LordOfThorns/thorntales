@@ -790,3 +790,47 @@ create policy "reviewers read revisions" on public.pn_revisions
     public.is_admin()
     or (public.is_reviewer() and exists (select 1 from public.pn_entries e where e.id = entry_id))
   );
+
+
+-- =========================================================
+-- Replies to comments (comments.js): a reply keeps the id of the comment it answers in
+-- parent_id and is shown in that comment's branch. Branches are one level deep: a reply
+-- to a reply is moved to the top comment of the branch (the text says "@name, ...").
+-- If the top comment is deleted, its replies stay as ordinary comments.
+-- Added 2026-11-22.
+-- =========================================================
+
+alter table public.comments
+  add column if not exists parent_id bigint references public.comments (id) on delete set null;
+create index if not exists comments_parent_idx on public.comments (parent_id);
+
+-- a reply must belong to the same discussion; a reply to a reply goes to the branch root
+create or replace function public.comment_reply_check()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  p record;
+begin
+  if new.parent_id is null then
+    return new;
+  end if;
+  select id, thread, parent_id into p from public.comments where id = new.parent_id;
+  if not found or p.thread <> new.thread then
+    raise exception 'a reply must answer a comment of the same discussion';
+  end if;
+  if p.parent_id is not null then
+    new.parent_id := p.parent_id;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists comments_reply_check on public.comments;
+create trigger comments_reply_check
+  before insert on public.comments
+  for each row execute function public.comment_reply_check();
+
+grant insert (thread, body, parent_id) on public.comments to authenticated;

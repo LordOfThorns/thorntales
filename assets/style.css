@@ -3683,3 +3683,16 @@ textarea.input{
 .pn-mark--reviewers{ border-bottom-color: rgba(185, 160, 245, .75); background: rgba(160, 130, 240, .07); }
 .pn-mark--reviewers.pn-mark--end::after{ color: rgba(205, 185, 255, .95); }
 .admin-users{ justify-self: stretch; display: grid; gap: 6px; }
+
+/* ветки комментариев: ответы под комментарием, с тонкой линией слева */
+.comment__replies{
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0 0 0 14px;
+  border-left: 1px solid rgba(214, 178, 92, .22);
+  display: grid;
+  gap: 12px;
+}
+.comment__replies[hidden]{ display: none; }
+.comment__replies .comment__avatar{ --avatar-size: 26px; }
+.comment-form--reply{ margin: 10px 0 0 15px; }

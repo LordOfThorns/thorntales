@@ -59,7 +59,8 @@
   async function loadThread(item) {
     const { data, error } = await Auth.client
       .from('comments')
-      .select('id, body, created_at, updated_at, user_id, author:profiles(display_name, avatar_url, is_admin)')
+      // '*' also takes parent_id (replies) once that column exists, and does not fail before
+      .select('*, author:profiles(display_name, avatar_url, is_admin)')
       .eq('thread', item.thread)
       .order('created_at', { ascending: true });
     if (error) throw error;
@@ -102,12 +103,23 @@
     const me = Auth.user;
     const admin = !!Auth.profile?.is_admin;
 
+    // Branches: a reply sits under the comment it answers (parent_id); one whose parent is
+    // gone is shown as an ordinary comment
+    const ids = new Set(item.list.map((c) => c.id));
+    const roots = item.list.filter((c) => !c.parent_id || !ids.has(c.parent_id));
+    const replies = new Map();
+    for (const c of item.list) {
+      if (c.parent_id && ids.has(c.parent_id)) {
+        if (!replies.has(c.parent_id)) replies.set(c.parent_id, []);
+        replies.get(c.parent_id).push(c);
+      }
+    }
     const listHtml = item.list.length
-      ? `<ol class="comments__list">${item.list.map((c) => commentHtml(c, me, admin)).join('')}</ol>`
+      ? `<ol class="comments__list">${roots.map((c) => commentHtml(c, me, admin, replies.get(c.id) || [])).join('')}</ol>`
       : `<p class="comments__note">${t('comments.empty')}</p>`;
 
     const formHtml = me
-      ? `<form class="comment-form">
+      ? `<form class="comment-form comment-form--new">
            <textarea class="input comment-form__text" name="body" rows="3" maxlength="${MAX_LEN}"
              placeholder="${t('comments.placeholder')}" required></textarea>
            <div class="comment-form__row">
@@ -119,10 +131,10 @@
       : `<p class="comments__note"><a href="/login.html?next=${encodeURIComponent(location.pathname + location.search + '#' + (item.el.closest('[id]')?.id || ''))}">${t('comments.signInLink')}</a>${t('comments.signInRest')}</p>`;
 
     // Keep a draft that was being typed in the new-comment form when the panel re-renders.
-    // Only that form: an open edit form of a comment comes first in the panel, and taking its
-    // text copied the edited comment into the new-comment box (it looked doubled, and was
-    // sent twice if "Send" was pressed).
-    const NEW = '.comment-form:not(.comment-form--edit) .comment-form__text';
+    // Only that form: an open edit or reply form comes first in the panel, and taking its
+    // text copied it into the new-comment box (it looked doubled, and was sent twice if
+    // "Send" was pressed).
+    const NEW = '.comment-form--new .comment-form__text';
     const draft = panel.querySelector(NEW)?.value || '';
     panel.innerHTML = listHtml + formHtml;
     const ta = panel.querySelector(NEW);
@@ -131,10 +143,12 @@
     wirePanel(item, panel);
   }
 
-  function commentHtml(c, me, admin) {
+  // A comment; a top comment carries its branch of replies (replies of replies are not nested)
+  function commentHtml(c, me, admin, branch) {
     const author = c.author || {};
     const mine = me && c.user_id === me.id;
     const actions = [
+      me ? `<button class="link-btn" data-act="reply">${t('comments.reply')}</button>` : '',
       mine ? `<button class="link-btn" data-act="edit">${t('comments.edit')}</button>` : '',
       mine || admin ? `<button class="link-btn" data-act="delete">${t('comments.delete')}</button>` : '',
     ].join('');
@@ -150,6 +164,7 @@
           </div>
           <div class="comment__body">${bodyHtml(c.body)}</div>
           ${actions ? `<div class="comment__actions">${actions}</div>` : ''}
+          ${branch ? `<ol class="comment__replies"${branch.length ? '' : ' hidden'}>${branch.map((r) => commentHtml(r, me, admin)).join('')}</ol>` : ''}
         </div>
       </li>`;
   }
@@ -178,7 +193,7 @@
     if (!item) return;
     if (!item.open) await toggle(item);
     item.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    const ta = item.el.querySelector('.comment-form__text');
+    const ta = item.el.querySelector('.comment-form--new .comment-form__text');
     if (!ta) return; // not signed in: the panel says how to sign in
     const q = `${text.split(/\r?\n/).map((l) => `> ${l}`).join('\n')}\n\n`;
     ta.value = ta.value.trim() ? `${ta.value.replace(/\s*$/, '')}\n\n${q}` : q;
@@ -187,7 +202,7 @@
   }
 
   function wirePanel(item, panel) {
-    const form = panel.querySelector('.comment-form');
+    const form = panel.querySelector('.comment-form--new');
     if (form) {
       const ta = form.querySelector('textarea');
       ta.addEventListener('keydown', (e) => {
@@ -224,7 +239,60 @@
         });
       } else if (btn.dataset.act === 'edit') {
         btn.addEventListener('click', () => startEdit(item, li, id));
+      } else if (btn.dataset.act === 'reply') {
+        btn.addEventListener('click', () => startReply(item, panel, li, id));
       }
+    });
+  }
+
+  // A reply form at the end of the branch. Branches are one level deep, so a reply to a
+  // reply goes to the top comment's branch and starts with "@name, ".
+  function startReply(item, panel, li, id) {
+    panel.querySelector('.comment-form--reply')?.remove();
+    const c = item.list.find((x) => x.id === id);
+    const rootLi = li.parentElement.closest('.comment') || li; // a reply's li sits in its root's branch
+    const rootId = Number(rootLi.dataset.id);
+    const branch = rootLi.querySelector('.comment__replies');
+    const form = document.createElement('form');
+    form.className = 'comment-form comment-form--reply';
+    form.innerHTML = `
+      <textarea class="input comment-form__text" rows="2" maxlength="${MAX_LEN}" required
+        placeholder="${t('comments.replyPlaceholder')}"></textarea>
+      <div class="comment-form__row">
+        <button class="link-btn" type="button" data-cancel>${t('comments.cancel')}</button>
+        <button class="btn btn--primary" type="submit">${t('comments.send')}</button>
+      </div>
+      <p class="form__msg" role="status"></p>`;
+    branch.hidden = false;
+    branch.after(form);
+    const ta = form.querySelector('textarea');
+    if (rootId !== id) ta.value = `@${c?.author?.display_name || t('comments.someone')}, `;
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    const close = () => {
+      form.remove();
+      if (!branch.children.length) branch.hidden = true;
+    };
+    form.querySelector('[data-cancel]').addEventListener('click', close);
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) form.requestSubmit();
+      if (e.key === 'Escape') close();
+    });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const body = ta.value.trim();
+      if (!body) return;
+      const btn = form.querySelector('[type="submit"]');
+      btn.disabled = true;
+      const { error } = await Auth.client.from('comments').insert({ thread: item.thread, body, parent_id: rootId });
+      btn.disabled = false;
+      if (error) {
+        const msg = form.querySelector('.form__msg');
+        msg.textContent = t('comments.sendFailed') + error.message;
+        msg.classList.add('is-error');
+        return;
+      }
+      await reload(item);
     });
   }
 

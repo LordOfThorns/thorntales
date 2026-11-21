@@ -13,8 +13,9 @@
   const t = (key, fallback) => (window.I18n && I18n.has(key) ? I18n.t(key) : (fallback ?? key));
   const rgb = (c) => `rgb(${c[0] | 0}, ${c[1] | 0}, ${c[2] | 0})`;
 
-  // Remember the choice (storage can be blocked: then it simply starts off)
-  try { toggle.checked = localStorage.getItem(STORE_KEY) === '1'; } catch (e) { /* ignore */ }
+  // On by default; a reader who turns it off is remembered (storage blocked: on)
+  toggle.checked = true;
+  try { toggle.checked = localStorage.getItem(STORE_KEY) !== '0'; } catch (e) { /* ignore */ }
   toggle.addEventListener('change', () => {
     try { localStorage.setItem(STORE_KEY, toggle.checked ? '1' : '0'); } catch (e) { /* ignore */ }
     if (!toggle.checked) hide();
