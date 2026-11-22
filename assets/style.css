@@ -1884,6 +1884,50 @@ textarea.input{
 
 .legend__list--after-ramp{ margin-top: 10px; }
 
+/* "What are these zones?": a short note on each zone, folded by default */
+.legend__more{
+  margin: 14px 0 4px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,.07);
+}
+.legend__more summary{
+  cursor: pointer;
+  font-size: 14px;
+  color: #d6b25c;
+  list-style: none;
+}
+.legend__more summary::-webkit-details-marker{ display: none; }
+.legend__more summary::before{
+  content: "▸";
+  display: inline-block;
+  width: 1em;
+  transition: transform .15s ease;
+}
+.legend__more[open] summary::before{ transform: rotate(90deg); }
+.legend__more summary:hover{ color: #ecd08a; }
+.legend__more > .legend__hint{ margin: 8px 0 0; }
+.zone-info{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px 22px;
+  margin: 12px 0 0;
+}
+.zone-info__item{ min-width: 0; }
+.zone-info dt{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.zone-info dd{
+  margin: 4px 0 0 30px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 /* Zone under cursor (terrain.html) */
 
 

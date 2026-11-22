@@ -86,16 +86,32 @@
     const relief = ramp(steps, t('legend.low'), t('legend.high'), t('legend.reliefHint'));
 
     let zones = '';
+    let about = '';
     if (mode === 'biomes') {
-      zones = ZONE_ORDER
-        .filter((id) => TM.biomeColors[id])
+      const ids = ZONE_ORDER.filter((id) => TM.biomeColors[id]);
+      zones = ids
         .map((id) => item(`background:${rgb(TM.biomeColors[id])}`, t('biome.' + id)))
         .join('');
+      // A short note on every zone for readers who don't know much geography;
+      // stays open across new maps if the reader opened it
+      const wasOpen = host.querySelector('.legend__more')?.open;
+      about = `
+        <details class="legend__more"${wasOpen ? ' open' : ''}>
+          <summary>${escapeHtml(t('legend.more'))}</summary>
+          <p class="legend__hint">${escapeHtml(t('legend.moreHint'))}</p>
+          <dl class="zone-info">${ids.map((id) => `
+            <div class="zone-info__item">
+              <dt><span class="legend__swatch" style="display:inline-block;width:22px;height:14px;background:${rgb(TM.biomeColors[id])}"></span>${escapeHtml(t('biome.' + id))}</dt>
+              <dd>${escapeHtml(t('zone.' + id))}</dd>
+            </div>`).join('')}
+          </dl>
+        </details>`;
     }
 
     host.innerHTML = `
       <h2 class="legend__title">${escapeHtml(t('legend.title'))}</h2>
       ${zones ? `<ul class="legend__list">${zones}</ul>` : ''}
+      ${about}
       <h3 class="legend__subtitle">${escapeHtml(t('legend.water'))}</h3>
       ${depthRamp}
       <ul class="legend__list legend__list--after-ramp">${water}</ul>
