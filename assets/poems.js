@@ -470,6 +470,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
   // State of the open poem form: the text in every language, and the open tab
   let formState = null;
   function initForm(form, p) {
+    if (window.TagPicker) TagPicker.attach(form.elements.tags); // clickable tags under the field
     const v = {};
     for (const l of LANGS) v[l] = { title: '', html: '' };
     if (p) {

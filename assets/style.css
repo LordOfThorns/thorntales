@@ -2068,8 +2068,35 @@ textarea.input{
 
 .poem-edit__row{
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 140px;
+  grid-template-columns: 140px minmax(0, 1fr); /* a short date, the tags get the room */
   gap: 12px;
+  align-items: start;
+}
+
+/* clickable tags under the tags field (tag-picker.js) */
+.tag-picker{ display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.tag-picker__hint, .tag-picker__loading{ flex-basis: 100%; font-size: 12px; color: var(--faint); }
+.tag-chip{
+  padding: 3px 10px;
+  border: 1px solid rgba(214, 178, 92, .35);
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tag-chip:hover{ border-color: rgba(214, 178, 92, .7); color: var(--text); }
+.tag-chip.is-on{ background: rgba(214, 178, 92, .18); border-color: rgba(214, 178, 92, .8); color: #ecd08a; }
+.tag-picker__more{
+  padding: 3px 8px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: #d6b25c;
+  text-decoration: underline dotted;
+  cursor: pointer;
 }
 
 @media (max-width: 520px){

@@ -331,7 +331,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
           </label>
         </div>
         <label class="field">
-          <span class="field__label">${esc(t('poems.fieldTags', 'Теги'))} <span class="field__hint">· ${esc(t('poems.tagsHint', 'через запятую'))}</span></span>
+          <span class="field__label">${esc(t('poems.fieldTags', 'Теги'))} <span class="field__hint">· ${esc(t('poems.tagsHint', 'через запятую или кнопками ниже'))}</span></span>
           <input class="input" name="tags" value="${esc((x?.tags || []).join(', '))}">
         </label>
         <div class="text-edit__tabs" role="tablist"></div>
@@ -354,6 +354,7 @@ window.siteGet = window.siteGet || ((url, o = {}) => (window.SiteFetch
       </form>`;
     const form = root.querySelector('form');
     const f = form.elements;
+    if (window.TagPicker) TagPicker.attach(f.tags); // clickable tags under the field
 
     const saveTab = () => {
       st.v[tab] = { title: f.title.value.trim(), body: field.get() };
