@@ -78,6 +78,7 @@
     const water = [
       item(`background:${rgb(A.lake)}`, t('legend.lake')),
       item(`background:${rgb(A.river)}`, t('legend.river'), 'legend__swatch--line'),
+      item(`background:${rgb(TM.seaIceColor || [224, 234, 242])}`, t('legend.seaIce')),
     ].join('');
     const bands = A.depthBands.map((b) => b.c);
     const depthRamp = ramp(bands, t('legend.shelf'), t('legend.ocean'));

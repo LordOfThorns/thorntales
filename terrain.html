@@ -10,7 +10,7 @@
   <meta property="og:image" content="https://www.thorntales.net/assets/preview.png">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title data-i18n="nav.mapGen">Генератор карт · Thorntales</title>
-  <link rel="stylesheet" href="/assets/style.css?v=76" />
+  <link rel="stylesheet" href="/assets/style.css?v=78" />
 </head>
 <body data-page="mapGen">
   <main class="wrap map-page">
@@ -121,6 +121,11 @@
               <span class="map-scale"><span data-i18n="planet.closer">ближе</span><button class="planet-hz" type="button" id="plToHz" data-i18n="planet.toHz">в зону жизни</button><span data-i18n="planet.further">дальше</span></span>
             </label>
             <label class="field map-field">
+              <span class="field__label"><span data-i18n="planet.ecc">Вытянутость орбиты</span> <output class="map-val" id="plEccOut"></output></span>
+              <input class="map-slider" id="plEcc" type="range" min="0" max="60" step="1" value="2">
+              <span class="map-scale"><span data-i18n="planet.eccRound">круг</span><span data-i18n="planet.eccLong">вытянутая</span></span>
+            </label>
+            <label class="field map-field">
               <span class="field__label"><span data-i18n="planet.tilt">Наклон оси</span> <output class="map-val" id="plTiltOut"></output></span>
               <input class="map-slider" id="plTilt" type="range" min="0" max="90" step="1" value="23">
               <span class="map-scale"><span data-i18n="planet.tiltNone">без сезонов</span><span data-i18n="planet.tiltSide">на боку</span></span>
@@ -133,10 +138,50 @@
                 <option value="5" data-i18n="planet.dayFast">быстрое — сутки в несколько часов</option>
               </select>
             </label>
+            <label class="field map-field">
+              <span class="field__label" data-i18n="planet.atmo">Атмосфера</span>
+              <select class="input" id="plAtmo">
+                <option value="thin" data-i18n="planet.atmoThin">тонкая — как высоко в горах</option>
+                <option value="earth" selected data-i18n="planet.atmoEarth">как у Земли</option>
+                <option value="thick" data-i18n="planet.atmoThick">плотная — теплее, сезоны мягче</option>
+                <option value="venus" data-i18n="planet.atmoVenus">очень плотная — как у Венеры</option>
+              </select>
+            </label>
+            <label class="field map-field">
+              <span class="field__label" data-i18n="planet.comp">Далёкий компаньон</span>
+              <select class="input" id="plComp">
+                <option value="" selected data-i18n="planet.star2None">нет</option>
+                <option value="red" data-i18n="planet.starRed">красный карлик — тусклый</option>
+                <option value="orange" data-i18n="planet.starOrange">оранжевая</option>
+                <option value="yellow" data-i18n="planet.starYellow">жёлтая, как Солнце</option>
+                <option value="white" data-i18n="planet.starWhite">белая — ярче</option>
+                <option value="blue" data-i18n="planet.starBlue">голубая — очень яркая</option>
+              </select>
+            </label>
+            <label class="field map-field" id="plCompBox" hidden>
+              <span class="field__label"><span data-i18n="planet.compDist">До компаньона</span> <output class="map-val" id="plCompOut"></output></span>
+              <input class="map-slider" id="plCompDist" type="range" min="0" max="1000" step="1" value="500">
+              <span class="map-scale"><span data-i18n="planet.closer">ближе</span><span data-i18n="planet.further">дальше</span></span>
+            </label>
+            <label class="planet-check">
+              <input type="checkbox" id="plLocked">
+              <span data-i18n="planet.locked">Повёрнута к звезде одной стороной (приливный захват)</span>
+            </label>
+            <div class="planet-season" id="plSeasonBox">
+              <div class="planet-season__head">
+                <label class="planet-check">
+                  <input type="checkbox" id="plSeasonOn">
+                  <span data-i18n="planet.seasonOn">Показать время года на карте</span>
+                </label>
+                <button class="btn btn--ghost planet-play" type="button" id="plPlay" data-i18n="planet.play">▶ год</button>
+              </div>
+              <input class="map-slider" id="plSeason" type="range" min="0" max="359" step="1" value="90" aria-label="season">
+              <output class="planet-season__out" id="plSeasonOut"></output>
+            </div>
             <p class="planet-summary" id="plSummary" aria-live="polite"></p>
           </div>
         </div>
-        <p class="planet-note" data-i18n="planet.note">* Это прототип, модуль в разработке (in development). Климат считается упрощённо: учтены только свет звёзд, наклон оси и число поясов ветров. Сезоны по отдельности, морской лёд, приливный захват и цвет света звезды пока не учитываются.</p>
+        <p class="planet-note" data-i18n="planet.note">* Это прототип, модуль в разработке (in development). Климат упрощённый: учтены свет звёзд, вытянутость орбиты, наклон оси, вращение, атмосфера и приливный захват. Время года показывает снег, лёд и сухие сезоны поверх карты, а сами природные зоны считаются по среднему за год. Гравитация и цвет растений под чужим солнцем пока не учитываются.</p>
       </section>
 
       <div class="map-panel__foot">
@@ -155,8 +200,11 @@
       </div>
       <div class="map-tip" id="mapTip" hidden></div>
       <div class="map-tools">
-        <p class="map-hint" data-i18n="terrain.dragHint">Мир круглый: карту можно тянуть влево и вправо, она не кончается. Окно растягивается за правый нижний угол.</p>
-        <button class="btn btn--ghost" type="button" id="zoomToggle" data-i18n="terrain.zoomOut">Уменьшить вид</button>
+        <p class="map-hint" id="mapHint" data-i18n="terrain.dragHint">Мир круглый: карту можно тянуть влево и вправо, она не кончается. Окно растягивается за правый нижний угол.</p>
+        <span class="map-tools__btns">
+          <button class="btn btn--ghost" type="button" id="globeToggle" data-i18n="terrain.globe">Показать как глобус</button>
+          <button class="btn btn--ghost" type="button" id="zoomToggle" data-i18n="terrain.zoomOut">Уменьшить вид</button>
+        </span>
       </div>
       <section class="legend" id="legend" aria-live="polite"></section>
     </div>
@@ -166,13 +214,13 @@
     </footer>
   </main>
 
-  <script src="/assets/i18n.js?v=40"></script>
+  <script src="/assets/i18n.js?v=44"></script>
   <script src="/assets/layout.js?v=7"></script>
-  <script src="/assets/terrain-map.js?v=38"></script>
-  <script src="/assets/map-legend.js?v=5"></script>
-  <script src="/assets/map-hover.js?v=7"></script>
-  <script src="/assets/planet-system.js?v=1"></script>
-  <script src="/assets/terrain-page.js?v=8"></script>
+  <script src="/assets/terrain-map.js?v=54"></script>
+  <script src="/assets/map-legend.js?v=8"></script>
+  <script src="/assets/map-hover.js?v=9"></script>
+  <script src="/assets/planet-system.js?v=2"></script>
+  <script src="/assets/terrain-page.js?v=11"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
   <script src="/assets/auth.js?v=2"></script>
 </body>

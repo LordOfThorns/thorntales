@@ -91,11 +91,11 @@
   // -------------------- Wind --------------------
   // Planetary wind belts plus a weak, large-scale meander.
   // lat 0 = equator (map middle), 1 = pole (top/bottom), same as computeTemperature.
-  //   easterly trades 0..0.25, westerlies 0.25..0.75, polar easterlies 0.75..1;
+  //   easterly trades 0..1/3 (30 deg), westerlies 1/3..2/3, polar easterlies 2/3..1 (as on Earth);
   //   meridional part: trades blow towards the equator, westerlies towards the pole.
   // The meander is the curl of a smooth noise field, scaled to at most WIND_MEANDER of the
   // belt wind, so it bends the flow but cannot turn it into closed eddies.
-  // Speed is NOT renormalised: calm belts (~lat 0.25 / 0.75) stay calm and become dry,
+  // Speed is NOT renormalised: calm belts (~30 and 60 deg) stay calm and become dry,
   // like the subtropical highs on Earth.
   const WIND_MEANDER = 0.35;
   const WIND_MERIDIONAL = 0.35;
@@ -140,10 +140,14 @@
       // c cells per hemisphere (3 on Earth): the belt wind turns at the cell borders,
       // easterly in the tropical cell; one slow cell has weak easterlies everywhere
       const c = PLANET.cells;
-      const zonal = c === 1 ? -0.5 : -Math.cos(Math.PI * (c - 1) * lat);
       const pts = [0, ...cellBorders(c), 1];
       let j = 0;
       while (j < pts.length - 2 && lat > pts[j + 1]) j++;
+      // belt wind: strongest inside a cell, calm at its borders (-cos over a stretched
+      // latitude that puts the borders at half steps)
+      const fl = j === 0 ? (c === 1 ? lat : 0.5 * lat / pts[1])
+        : (j - 0.5) + (lat - pts[j]) / (pts[j + 1] - pts[j]) * (j === pts.length - 2 ? 0.5 : 1);
+      const zonal = c === 1 ? -0.5 : -Math.cos(Math.PI * fl);
       // surface flow: towards the equator in the tropical cell, then alternating
       const poleward = (j % 2 === 0 ? -1 : 1) * Math.sin(Math.PI * (lat - pts[j]) / (pts[j + 1] - pts[j]));
       const bx = zonal;
@@ -151,8 +155,16 @@
 
       for (let x = 0; x < g; x++) {
         const i = idx(x, y, g);
-        const wx = bx + WIND_MEANDER * cx[i] / cmax;
-        const wy = by + WIND_MEANDER * cy[i] / cmax;
+        let ax = bx, ay = by;
+        if (PLANET.locked) {
+          // surface wind from the night side towards the point under the star (map centre):
+          // the way the sunlight grows; calm under the star and on the far side
+          const lon = (x / g - 0.5) * 2 * Math.PI, la = (0.5 - v) * Math.PI;
+          ax = -Math.sin(lon);
+          ay = Math.sin(la) * Math.cos(lon); // screen y points south
+        }
+        const wx = ax + WIND_MEANDER * cx[i] / cmax;
+        const wy = ay + WIND_MEANDER * cy[i] / cmax;
         const len = Math.hypot(wx, wy) + 1e-9;
         vx[i] = wx / len;
         vy[i] = wy / len;
@@ -289,10 +301,14 @@ function sampleHeightNearest(h, n, u, v) {
     }
     for (const b of blobs) { b.cos = Math.cos(b.ang); b.sin = Math.sin(b.ang); }
 
+    // Two scales of bending: the broad one moves whole continents, the middle one bends
+    // their long sides (a stretched blob alone gave coasts straight as a ruler)
     function warp(u, v) {
       const wx = wfbm(u, v, 2, seed + 900, 3, 0.5) - 0.5;
       const wy = wfbm(u, v, 2, seed + 901, 3, 0.5) - 0.5;
-      return [u + wx * 0.10 / ASPECT, v + wy * 0.10];
+      const mx = wfbm(u, v, 6, seed + 902, 2, 0.5) - 0.5;
+      const my = wfbm(u, v, 6, seed + 903, 2, 0.5) - 0.5;
+      return [u + (wx * 0.10 + mx * 0.07) / ASPECT, v + wy * 0.10 + my * 0.07];
     }
 
     for (let y = 0; y < nh; y++) {
@@ -318,7 +334,9 @@ function sampleHeightNearest(h, n, u, v) {
 
         const shore = wfbm(u, v, 6, seed + 111, 5, 0.5);
         const shore2 = wfbm(u, v, 18, seed + 112, 4, 0.5);
-        const coast = clamp(cont + (shore - 0.5) * 0.22 + (shore2 - 0.5) * 0.10, 0, 1);
+        // fine detail: small bays, capes and inlets along every coast
+        const shore3 = wfbm(u, v, 46, seed + 113, 2, 0.5);
+        const coast = clamp(cont + (shore - 0.5) * 0.22 + (shore2 - 0.5) * 0.10 + (shore3 - 0.5) * 0.06, 0, 1);
 
         const d = wfbm(u, v, 22, seed + 30, 5, 0.5);
         let height = 0.82 * coast + 0.18 * d;
@@ -453,7 +471,8 @@ function sampleHeightNearest(h, n, u, v) {
 
         // belt strength and width vary along the edge
         const along = wfbm(u, v, 5, seed + 520, 3, 0.5);       // ~0.2..0.8
-        const strength = clamp((along - 0.25) * 2.2, 0.15, 1.3);
+        // varies along the edge, but not so much that a range breaks into separate lumps
+        const strength = clamp(0.45 + (along - 0.5) * 1.6, 0.4, 1.25);
         const width = 0.035 + 0.03 * wfbm(u, v, 4, seed + 521, 2, 0.5);
 
         // crest detail; warped so ridges are not grid aligned
@@ -940,7 +959,27 @@ function sampleHeightNearest(h, n, u, v) {
   //  - Wind cells: the belts (and the calm, dry belts between them) follow the cell count;
   //    rain is also raised where surface winds meet and lowered where they part, relative
   //    to Earth's pattern.
-  const EARTH = { tilt: 23.44, flux: 1, cells: 3 };
+  //  - Atmosphere (opts.planet.atmo): greenhouse warming, how well heat is spread between
+  //    the equator and the poles (and between day and night), how strong the seasons are.
+  //  - Tidal locking (opts.planet.locked): one side always faces the star. Zones then lie
+  //    in rings around the point under the star (the middle of the map): a hot day side,
+  //    a frozen night side, a liveable ring near the edge of the light. Winds blow from the
+  //    night side towards that point, where the air rises and it rains most.
+  //  - Seasons (seasonLayer below): snow and sea ice for one moment of the year, dry seasons
+  //    of savannas and shrubs; drawn on top of the map, so it can change without a new map.
+  const EARTH = { tilt: 23.44, flux: 1, cells: 3, locked: false, atmo: 'earth', ecc: 0.0167 };
+  const ATMO = {
+    //        greenhouse  heat spread  season strength
+    thin:  { green: -0.15, spread: 1.2,  season: 1.3 },
+    earth: { green: 0,     spread: 1,    season: 1 },
+    thick: { green: 0.14,  spread: 0.7,  season: 0.6 },
+    venus: { green: 0.4,   spread: 0.35, season: 0.25 },
+  };
+  // Earth curve of the 0..1 temperature by latitude (0 equator, 1 pole). With the zone
+  // thresholds of biomeId (and cooling with height) it puts hot zones up to ~35 deg, temperate
+  // forests and steppes around 45 deg, taiga from ~55 deg, tundra from ~65 deg, as on Earth
+  // (1.2 put rainforest at 40 deg, 0.85 taiga and tundra at 45 deg)
+  const EARTH_TEMP_EXP = 1.0;
   let PLANET = EARTH;
   let LAT_TEMP = null;      // temperature at lat 0..1 (LAT_STEPS + 1 values), null = Earth
   const LAT_STEPS = 256;
@@ -963,7 +1002,7 @@ function sampleHeightNearest(h, n, u, v) {
   }
 
   function buildLatTemp(planet) {
-    const earthTemp = (lat) => 1 - Math.pow(lat, 1.2); // the curve the generator always used
+    const earthTemp = (lat) => 1 - Math.pow(lat, EARTH_TEMP_EXP); // the generator's Earth curve
     const tauOf = (tilt, flux) => {
       const a = new Float64Array(LAT_STEPS + 1);
       for (let k = 0; k <= LAT_STEPS; k++) {
@@ -1005,36 +1044,91 @@ function sampleHeightNearest(h, n, u, v) {
         out[k] = e + mean + HEAT_SPREAD * (out[k] - e - mean);
       }
     }
-    // slow rotation spreads heat towards the poles, fast rotation keeps it in the tropics
-    const spread = planet.cells <= 1 ? 0.7 : planet.cells >= 5 ? 1.15 : 1;
-    if (spread !== 1) {
-      let mean = 0, wsum = 0;
-      for (let k = 0; k <= LAT_STEPS; k++) {
-        const w = Math.cos((k / LAT_STEPS) * Math.PI / 2); // area of the latitude band
-        mean += out[k] * w; wsum += w;
-      }
-      mean /= wsum;
-      for (let k = 0; k <= LAT_STEPS; k++) out[k] = mean + (out[k] - mean) * spread;
-    }
+    // slow rotation spreads heat towards the poles, fast rotation keeps it in the tropics;
+    // a thick atmosphere spreads it too, a thin one hardly
+    const atmo = ATMO[planet.atmo] || ATMO.earth;
+    const spread = (planet.cells <= 1 ? 0.7 : planet.cells >= 5 ? 1.15 : 1) * atmo.spread;
+    spreadAround(out, spread, (k) => Math.cos((k / LAT_STEPS) * Math.PI / 2));
+    for (let k = 0; k <= LAT_STEPS; k++) out[k] += atmo.green;
     return out;
   }
 
+  // Pull a table towards its area-weighted mean (heat transport); w(k) = area of step k
+  function spreadAround(out, spread, w) {
+    if (spread === 1) return;
+    let mean = 0, wsum = 0;
+    for (let k = 0; k <= LAT_STEPS; k++) { mean += out[k] * w(k); wsum += w(k); }
+    mean /= wsum;
+    for (let k = 0; k <= LAT_STEPS; k++) out[k] = mean + (out[k] - mean) * spread;
+  }
+
+  // Effective temperature (sunlight^1/4, Earth's equator = 1) turned into the map's 0..1
+  // temperature through Earth's curve, extended in a straight line beyond Earth's range
+  function tauToTemp(tau, te) {
+    const slope = 1 / (te[0] - te[LAT_STEPS]);
+    if (tau >= te[0]) return 1 + (tau - te[0]) * slope;
+    if (tau <= te[LAT_STEPS]) return (tau - te[LAT_STEPS]) * slope;
+    let lo = 0, hi = LAT_STEPS;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (te[m] >= tau) lo = m; else hi = m; }
+    const f = (te[lo] - tau) / (te[lo] - te[hi] + 1e-12);
+    return 1 - Math.pow((lo + f) / LAT_STEPS, EARTH_TEMP_EXP);
+  }
+
+  // Earth's annual sunlight by latitude as tau (equator = 1) and its scale
+  let EARTH_TAU = null;
+  function earthTau() {
+    if (EARTH_TAU) return EARTH_TAU;
+    const te = new Float64Array(LAT_STEPS + 1);
+    for (let k = 0; k <= LAT_STEPS; k++) {
+      te[k] = Math.pow(annualInsolation((k / LAT_STEPS) * Math.PI / 2, EARTH.tilt * Math.PI / 180), 0.25);
+    }
+    const norm = te[0];
+    for (let k = 0; k <= LAT_STEPS; k++) te[k] /= norm;
+    EARTH_TAU = { te, norm };
+    return EARTH_TAU;
+  }
+
+  // Tidally locked planet: temperature by the angle from the point under the star,
+  // s = angle / 180 deg (0 under the star, 0.5 the edge of the light, 1 the far side)
+  function buildLockedTemp(planet) {
+    const { te, norm } = earthTau();
+    const atmo = ATMO[planet.atmo] || ATMO.earth;
+    const out = new Float32Array(LAT_STEPS + 1);
+    for (let k = 0; k <= LAT_STEPS; k++) {
+      const sun = Math.max(0, Math.cos((k / LAT_STEPS) * Math.PI)); // the star always at this height
+      const tau = Math.pow(planet.flux * sun, 0.25) / norm;
+      out[k] = clamp(tauToTemp(tau, te), -0.8, 1.6);
+    }
+    // wind carries heat from the day side to the night side; much more with thick air
+    const rot = planet.cells <= 1 ? 0.85 : planet.cells >= 5 ? 1.1 : 1;
+    spreadAround(out, clamp(0.5 * atmo.spread * rot, 0.15, 0.9), (k) => Math.sin((k / LAT_STEPS) * Math.PI) + 1e-3);
+    for (let k = 0; k <= LAT_STEPS; k++) out[k] += atmo.green;
+    return out;
+  }
+
+  // Angle from the point under the star (map centre) over 180 deg, for a locked planet
+  function lockedS(u, v) {
+    const lon = (u - 0.5) * 2 * Math.PI, lat = (0.5 - v) * Math.PI;
+    return Math.acos(clamp(Math.cos(lat) * Math.cos(lon), -1, 1)) / Math.PI;
+  }
+
   function latTemp(lat) {
-    if (!LAT_TEMP) return 1.0 - Math.pow(lat, 1.2);
+    if (!LAT_TEMP) return 1.0 - Math.pow(lat, EARTH_TEMP_EXP);
     const f = clamp(lat, 0, 1) * LAT_STEPS;
     const k = Math.min(LAT_STEPS - 1, Math.floor(f));
     return lerp(LAT_TEMP[k], LAT_TEMP[k + 1], f - k);
   }
 
   function isEarth(p) {
-    return Math.abs(p.tilt - EARTH.tilt) < 0.01 && Math.abs(p.flux - 1) < 1e-4 && p.cells === 3;
+    return Math.abs(p.tilt - EARTH.tilt) < 0.01 && Math.abs(p.flux - 1) < 1e-4 && p.cells === 3
+      && !p.locked && p.atmo === 'earth';
   }
 
   // Wind cell borders (lat 0..1) for c cells per hemisphere: where the belt wind turns.
   // c = 3 gives 0.25 and 0.75, the borders the generator always used.
   function cellBorders(c) {
     const b = [];
-    for (let k = 0; k < c - 1; k++) b.push(c === 1 ? 0 : (2 * k + 1) / (2 * (c - 1)));
+    for (let k = 0; k < c - 1; k++) b.push((k + 1) / c); // Earth (3): 30 and 60 degrees
     return b;
   }
 
@@ -1048,6 +1142,99 @@ function sampleHeightNearest(h, n, u, v) {
     const a = j % 2 === 0 ? 1 : -1;
     return lerp(a, -a, (1 - Math.cos(Math.PI * t)) / 2);
   }
+
+  // -------------------- Seasons layer --------------------
+  // One moment of the year on top of the drawn map (no new map needed): seasonal snow on
+  // land, sea ice, frozen lakes, and the dry season of savannas, shrubs and steppes.
+  // lam = the planet's position in its year (solar longitude, 0 = spring equinox of the
+  // north), or null for the year as a whole (then only ice that stays all year).
+  // The swing of sunlight is damped: land warms and cools with a delay, the sea far less;
+  // a thick atmosphere evens the seasons out, a thin one sharpens them.
+  const SEASON_GAIN = 0.5;   // share of the sunlight swing that reaches the land temperature
+  const SEASON_SEA = 0.25;   // the sea follows the seasons this much less (it stores heat)
+  const SEASON_MAX = 0.45;   // the swing is capped: in the polar night sunlight drops to zero
+  const SNOW_T = 0.11;       // land below this is under snow (the year-mean ice line is ~0.12)
+  const ICE_T = 0.16;        // sea below this freezes (Earth: all year above ~82 deg, in winter to ~72 deg)
+  const PERIHELION = 283 * Math.PI / 180; // Earth's: early January (northern winter)
+
+  function dailyInsolation(phi, dec) {
+    const p = clamp(phi, -Math.PI / 2 + 1e-4, Math.PI / 2 - 1e-4);
+    const c = -Math.tan(p) * Math.tan(dec);
+    const h0 = c >= 1 ? 0 : c <= -1 ? Math.PI : Math.acos(c);
+    return (h0 * Math.sin(p) * Math.sin(dec) + Math.cos(p) * Math.cos(dec) * Math.sin(h0)) / Math.PI;
+  }
+
+  // Change of temperature from the year mean at solar longitude lam, by signed latitude
+  // (index LAT_STEPS = equator, 0 = south pole, 2 * LAT_STEPS = north pole)
+  function seasonDelta(planet, lam) {
+    const { te, norm } = earthTau();
+    const slope = 1 / (te[0] - te[LAT_STEPS]);
+    const eps = planet.tilt * Math.PI / 180;
+    const dec = Math.asin(Math.sin(eps) * Math.sin(lam));
+    const e = planet.ecc || 0;
+    // closer to the star = more light; relative to the year mean, which flux already holds
+    const near = Math.pow((1 + e * Math.cos(lam - PERIHELION)) / (1 - e * e), 2) * Math.sqrt(1 - e * e);
+    const atmo = ATMO[planet.atmo] || ATMO.earth;
+    const out = new Float32Array(2 * LAT_STEPS + 1);
+    for (let k = -LAT_STEPS; k <= LAT_STEPS; k++) {
+      const phi = (k / LAT_STEPS) * Math.PI / 2;
+      const now = Math.pow(planet.flux * near * dailyInsolation(phi, dec), 0.25);
+      const year = Math.pow(planet.flux * annualInsolation(Math.abs(phi), eps), 0.25);
+      out[k + LAT_STEPS] = clamp((now - year) / norm * slope * SEASON_GAIN, -SEASON_MAX, SEASON_MAX) * atmo.season;
+    }
+    return out;
+  }
+
+  function seasonLayer(lam) {
+    const TM = window.TerrainMap;
+    const temp = TM.lastTemp, ids = TM.lastBiomeIds;
+    if (!temp || !ids) return null;
+    const n = TM.lastSize, nh = TM.lastHeight, planet = TM.lastPlanet || EARTH, lake = TM.lastLake;
+    const seasonal = lam != null && !planet.locked;
+    const delta = seasonal ? seasonDelta(planet, lam) : null;
+    const canvas = document.createElement('canvas');
+    canvas.width = n; canvas.height = nh;
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(n, nh);
+    const d = img.data;
+    const ice = new Uint8Array(n * nh); // 1 sea ice / frozen lake, 2 seasonal snow
+    const tiltK = Math.min(1, planet.tilt / 15); // little tilt, little dry season
+    const put = (i, c, a) => { const o = i * 4; d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = a * 255; };
+    for (let y = 0; y < nh; y++) {
+      const sl = 0.5 - y / (nh - 1);                       // signed latitude, + north
+      const dRow = delta ? delta[Math.round((sl * 2 + 1) * LAT_STEPS)] : 0;
+      // +1 summer, -1 winter in this hemisphere
+      const summer = seasonal ? Math.sin(lam) * (sl >= 0 ? 1 : -1) * tiltK : 0;
+      for (let x = 0; x < n; x++) {
+        const i = idx(x, y, n);
+        const id = ids[i];
+        if (id === 0 || (lake && lake[i])) {
+          // sea (and lakes): ice where it is cold enough
+          const t = temp[i] + dRow * (id === 0 ? SEASON_SEA : 0.7);
+          const cover = 1 - smoothstep01(ICE_T - 0.025, ICE_T + 0.02, t);
+          if (cover > 0.02) { put(i, SEA_ICE, cover * 0.92); if (cover > 0.5) ice[i] = 1; }
+          continue;
+        }
+        if (id === BIOME.SNOW) continue; // ice all year already
+        const t = temp[i] + dRow;
+        const cover = 1 - smoothstep01(SNOW_T - 0.035, SNOW_T + 0.02, t);
+        if (cover > 0.02) { put(i, ATLAS.snow, cover * 0.88); if (cover > 0.5) ice[i] = 2; continue; }
+        if (!seasonal) continue;
+        // dry seasons: savannas and seasonal forests dry out in winter (the rains follow the
+        // sun), shrubs and steppes in summer (Mediterranean and continental droughts)
+        let dry = 0;
+        if (id === BIOME.SAVANNA || id === BIOME.SEASONAL_FOREST) dry = Math.max(0, -summer);
+        else if (id === BIOME.SHRUBLAND) dry = Math.max(0, summer);
+        else if (id === BIOME.STEPPE) dry = Math.max(0, summer) * 0.6;
+        if (dry > 0.02) put(i, DRY_GRASS, dry * 0.4);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    TM.lastIce = ice;
+    return canvas;
+  }
+  const SEA_ICE = [224, 234, 242];
+  const DRY_GRASS = [186, 156, 98];
 
   // -------------------- Climate --------------------
 
@@ -1066,9 +1253,12 @@ function sampleHeightNearest(h, n, u, v) {
         const i = idx(x, y, n);
         const height = h[i];
         const warp = (wfbm(u, v, 3, seed + 800, 3, 0.5) - 0.5) * 2 * TEMP_LAT_WARP;
-        const lat = clamp(Math.abs(v - 0.5) * 2.0 + warp, 0, 1); // 0 equator -> 1 poles
+        // 0 equator -> 1 poles; on a locked planet: 0 under the star -> 1 the far side
+        const lat = PLANET.locked
+          ? clamp(lockedS(u, v) + warp * 0.5, 0, 1)
+          : clamp(Math.abs(v - 0.5) * 2.0 + warp, 0, 1);
         // base temperature curve (nonlinear: wider tropics) + local variation
-        const base = latTemp(lat) // Earth: 1 - lat^1.2; other planets: see Planet above
+        const base = latTemp(lat) // Earth: 1 - lat^EARTH_TEMP_EXP; other planets: see Planet above
           + (wfbm(u, v, 8, seed + 810, 2, 0.5) - 0.5) * 2 * TEMP_LOCAL;
 
         // altitude cooling (only above sea)
@@ -1174,11 +1364,22 @@ function sampleHeightNearest(h, n, u, v) {
     const PR = new Float32Array(cg * cgh); // precipitation per step
     // rising or sinking air by latitude for the planet's wind cells, relative to Earth
     // (all 1 on Earth-like planets)
-    const belt = new Float32Array(cgh).fill(1);
-    if (PLANET.cells !== EARTH.cells) {
+    // (a locked planet: air rises under the star and sinks on the far side)
+    const belt = new Float32Array(cg * cgh).fill(1);
+    if (PLANET.locked) {
       for (let y = 0; y < cgh; y++) {
         const lat = Math.abs(y / (cgh - 1) - 0.5) * 2;
-        belt[y] = Math.exp(BELT_RAIN * (convergence(PLANET.cells, lat) - convergence(EARTH.cells, lat)));
+        for (let x = 0; x < cg; x++) {
+          const s = lockedS(x / cg, y / (cgh - 1));
+          const conv = clamp(Math.cos(s * Math.PI) * 1.6 - 0.3, -1, 1);
+          belt[idx(x, y, cg)] = Math.exp(BELT_RAIN * 1.3 * (conv - convergence(EARTH.cells, lat)));
+        }
+      }
+    } else if (PLANET.cells !== EARTH.cells) {
+      for (let y = 0; y < cgh; y++) {
+        const lat = Math.abs(y / (cgh - 1) - 0.5) * 2;
+        const b = Math.exp(BELT_RAIN * (convergence(PLANET.cells, lat) - convergence(EARTH.cells, lat)));
+        for (let x = 0; x < cg; x++) belt[idx(x, y, cg)] = b;
       }
     }
     const evap = (j) => 0.35 + 0.65 * T[j];
@@ -1218,7 +1419,7 @@ function sampleHeightNearest(h, n, u, v) {
             const lift = LIFT[j];
             let rate = pBase + (lift > 0 ? kOro * lift : 0);
             if (lift < 0) rate *= Math.exp(kShadow * lift);
-            rate *= belt[y];
+            rate *= belt[j];
             let p = q * clamp(rate, 0, 0.9);
             const excess = q - p - capacity(j);
             if (excess > 0) p += excess;
@@ -1377,7 +1578,10 @@ function sampleHeightNearest(h, n, u, v) {
   // depth is ~0.03, 8-12 px out it ranges ~0.08..0.28, so the shelf width varies a lot.
   const SHORE_SHALLOW_DEPTH = 0.06; // pale shore on land only next to water this shallow
 
-  const LAKE_MIN_DEPTH = 0.004; // filled depth (height units) to count as a lake
+  const LAKE_MIN_DEPTH = 0.006; // filled depth (height units) to count as a lake
+  // Lakes are rare on Earth (about 2% of land, mostly in glacial or rift country), so
+  // only the deepest, largest basins are kept until this share of the land is water
+  const LAKE_SHARE = 0.012;
   const LAKE_MIN_RAIN = 0.3;    // drier basins stay dry
   const LAKE_MIN_AREA = 30;     // pixels at size 768 (scaled with map area); smaller ones are noise
 
@@ -1539,6 +1743,111 @@ function sampleHeightNearest(h, n, u, v) {
   }
 
   // Remove connected regions (8-neighbour) smaller than minArea from a 0/1 mask
+  // Keep the lakes that matter: regions are ranked by depth x size and kept until their
+  // total area reaches `budget` cells; shallow puddles in every hollow are dropped
+  function limitLakes(mask, hf, h, n, budget, seaLevel) {
+    const nh = mask.length / n;
+    const seen = new Uint8Array(mask.length);
+    const stack = new Int32Array(mask.length);
+    const regions = [];
+    for (let s = 0; s < mask.length; s++) {
+      if (!mask[s] || seen[s]) continue;
+      const cells = [];
+      let deepest = 0, top = 0;
+      stack[top++] = s;
+      seen[s] = 1;
+      while (top > 0) {
+        const i = stack[--top];
+        cells.push(i);
+        deepest = Math.max(deepest, hf[i] - h[i], seaLevel - h[i]);
+        const x = i % n, y = (i / n) | 0;
+        for (let k = 0; k < 8; k++) {
+          const j = nbr(x, y, N8[k][0], N8[k][1], n, nh);
+          if (j >= 0 && mask[j] && !seen[j]) { seen[j] = 1; stack[top++] = j; }
+        }
+      }
+      regions.push({ cells, score: deepest * Math.sqrt(cells.length) });
+    }
+    regions.sort((a, b) => b.score - a.score);
+    let total = 0;
+    for (const r of regions) {
+      // the first (deepest, largest) lake may go somewhat over the budget, a giant may not
+      const limit = total === 0 ? budget * 2.5 : budget;
+      if (total + r.cells.length > limit) { for (const i of r.cells) mask[i] = 0; continue; }
+      total += r.cells.length;
+    }
+  }
+
+  // Transition belts between zones. On Earth a desert does not meet a dense forest:
+  // between them lie savanna, steppe or shrubs; and lowland ice gives way to tundra
+  // before the taiga. Forest cells within `r` px of a desert become the open zone that
+  // fits their climate; forest cells near lowland ice become tundra.
+  function addTransitions(ids, h, n, seaLevel, r) {
+    const N = ids.length;
+    const desert = new Uint8Array(N), ice = new Uint8Array(N);
+    for (let i = 0; i < N; i++) {
+      const id = ids[i];
+      if (id === BIOME.HOT_DESERT || id === BIOME.COLD_DESERT) desert[i] = 1;
+      // ice low down = polar ice cap (ice on high mountains already has rock and meadows around it)
+      else if (id === BIOME.SNOW && (h[i] - seaLevel) / (1 - seaLevel + 1e-9) < 0.45) ice[i] = 1;
+    }
+    const toDesert = bfsDistance(desert, n, r);
+    const toIce = bfsDistance(ice, n, r);
+    for (let i = 0; i < N; i++) {
+      const id = ids[i];
+      const nearIce = toIce[i] > 0;
+      const nearDesert = toDesert[i] > 0;
+      if (nearIce && (id === BIOME.TAIGA || id === BIOME.TEMPERATE_FOREST || id === BIOME.WET_TEMPERATE)) {
+        ids[i] = BIOME.TUNDRA;
+      } else if (nearDesert) {
+        if (id === BIOME.RAINFOREST || id === BIOME.SEASONAL_FOREST) ids[i] = BIOME.SAVANNA;
+        else if (id === BIOME.TEMPERATE_FOREST || id === BIOME.WET_TEMPERATE) ids[i] = BIOME.SHRUBLAND;
+        else if (id === BIOME.TAIGA) ids[i] = BIOME.STEPPE;
+      }
+    }
+  }
+
+  // Volcanic island chains over hotspots (like Hawaii): a plate slides over a fixed plume,
+  // so a line of islands forms, the youngest high and the older ones worn down, sinking
+  // into seamounts. Placed only in open ocean, away from the coasts.
+  function addIslandChains(h, n, seed, seaLevel) {
+    const nh = h.length / n;
+    const rng = mulberry32(seed + 4242);
+    const chains = 3 + ((rng() * 4) | 0);
+    for (let c = 0; c < chains; c++) {
+      let u = rng(), v = 0.12 + rng() * 0.76;
+      const dir = rng() * Math.PI * 2;
+      const count = 4 + ((rng() * 6) | 0);
+      const step = 0.018 + rng() * 0.016;           // v units between islands
+      const r0 = 0.007 + rng() * 0.007;             // radius of the youngest island
+      for (let k = 0; k < count; k++) {
+        const age = k / Math.max(1, count - 1);     // 0 youngest .. 1 oldest
+        const cx = wrapX(Math.round(u * n), n), cy = Math.round(v * (nh - 1));
+        u += Math.cos(dir) * step / ASPECT + (rng() - 0.5) * 0.006;
+        v += Math.sin(dir) * step + (rng() - 0.5) * 0.006;
+        if (cy < 2 || cy > nh - 3) break;
+        if (h[idx(cx, cy, n)] > seaLevel - 0.05) continue; // no islands on shelves or land
+        const peak = seaLevel + (0.07 - 0.11 * age) * (0.7 + rng() * 0.6); // old ones drown
+        const rad = r0 * (1 - 0.45 * age) * (0.8 + rng() * 0.5) * (nh - 1); // px
+        const R = Math.ceil(rad * 2.2);
+        for (let dy = -R; dy <= R; dy++) {
+          const y = cy + dy;
+          if (y < 0 || y >= nh) continue;
+          for (let dx = -R; dx <= R; dx++) {
+            const x = wrapX(cx + dx, n);
+            const i = idx(x, y, n);
+            // irregular outline: the distance is bent by noise
+            const wob = 1 + 0.35 * (wfbm(x / n, y / (nh - 1), 40, seed + 4300 + c, 2, 0.5) - 0.5) * 2;
+            const d = Math.hypot(dx, dy) / (rad * wob);
+            const w = Math.exp(-d * d * 1.6);
+            if (w < 0.01) continue;
+            h[i] = Math.max(h[i], lerp(h[i], peak, w));
+          }
+        }
+      }
+    }
+  }
+
   function dropSmallRegions(mask, n, minArea) {
     const nh = mask.length / n; // map height (n is the width)
     const seen = new Uint8Array(mask.length);
@@ -1563,22 +1872,26 @@ function sampleHeightNearest(h, n, u, v) {
     }
   }
 
+  // Zone colours: told apart by lightness as well as hue, in families. Forests are the
+  // darker greens (rainforest darkest, taiga bluish, temperate rainforest teal), open dry
+  // land is light and warm (steppe yellow-green, savanna straw, deserts sand / grey-beige),
+  // cold and high ground is greyish (tundra sage, rock brownish, meadows fresh light green).
   const ATLAS_BIOMES = {
-    1: [208, 192, 142],  // hot desert
-    2: [178, 174, 148],  // cold desert / semi-arid
-    3: [176, 182, 112],  // savanna
-    4: [62, 104, 86],    // taiga
-    5: [146, 158, 140],  // tundra
+    1: [218, 196, 144],  // hot desert: sand
+    2: [192, 180, 160],  // cold desert / semi-arid: grey-beige
+    3: [206, 186, 104],  // savanna: straw
+    4: [50, 88, 82],     // taiga: dark blue-green
+    5: [152, 166, 150],  // tundra: cool sage grey
     6: ATLAS.snow,       // snow and ice
-    7: [152, 182, 116],  // steppe / grassland
-    8: [84, 140, 82],    // seasonal forest
-    9: [62, 122, 76],    // temperate forest
-    10: [34, 102, 70],   // rainforest
-    11: [48, 110, 90],   // temperate rainforest
-    12: [140, 152, 98],  // shrubland
-    13: [128, 150, 124], // alpine meadow
-    14: [126, 124, 120], // bare rock
-    15: [86, 128, 116],  // wetland
+    7: [178, 198, 122],  // steppe / grassland: light yellow-green
+    8: [108, 152, 72],   // seasonal forest: yellow-green
+    9: [72, 130, 74],    // temperate forest: mid green
+    10: [26, 86, 56],    // rainforest: darkest green
+    11: [42, 108, 98],   // temperate rainforest: teal
+    12: [154, 156, 96],  // shrubland: olive
+    13: [166, 190, 142], // alpine meadow: fresh light green
+    14: [134, 122, 112], // bare rock: brownish grey
+    15: [92, 140, 146],  // wetland: blue-teal
   };
 
   // Ragged borders: colours and heights are read from a point shifted by fine noise,
@@ -1615,7 +1928,13 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
     }
     dropSmallRegions(lake, n, Math.round(LAKE_MIN_AREA * px * px));
   }
+  // inland water below sea level joins the other lake candidates (the budget decides)
   for (let i = 0; i < N; i++) if (h[i] <= seaLevel && !openSea[i]) lake[i] = 1;
+  if (hf) {
+    let landCells = 0;
+    for (let i = 0; i < N; i++) if (h[i] > seaLevel) landCells++;
+    limitLakes(lake, hf, h, n, Math.round(LAKE_SHARE * landCells), seaLevel);
+  }
   const lakeSoft = blurred(lake, n, Math.max(1, Math.round(1 * px)));
   window.TerrainMap.lastLake = lake; // for the hover tooltip
 
@@ -1635,6 +1954,14 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
   }
 
   const snowSoft = blurred(snow, n, Math.max(1, Math.round(2 * px)));
+
+  // Softened zone colours (land only, so coasts don't pull in black): borders between
+  // zones get a narrow blend instead of a hard cut, zones themselves stay flat
+  const ZONE_BLEND = 0.55;
+  const blendR = Math.max(1, Math.round(2 * px));
+  const landSoft = blurred(land, n, blendR);
+  const RS = blurred(R, n, blendR), GS = blurred(G, n, blendR), BS = blurred(B, n, blendR);
+  const zones = mode !== 'height';
 
   // Heights for the elevation layers: almost raw, so contours stay crisp
   const hc = blurred(h, n, 1);
@@ -1696,6 +2023,11 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
         // Colour from the jittered point: crisp, jagged borders
         const j = idx(jx[i], jy[i], n);
         r = R[j]; g = G[j]; b = B[j];
+        if (zones && landSoft[j] > 0.01) {
+          r = lerp(r, RS[j] / landSoft[j], ZONE_BLEND);
+          g = lerp(g, GS[j] / landSoft[j], ZONE_BLEND);
+          b = lerp(b, BS[j] / landSoft[j], ZONE_BLEND);
+        }
 
         // Elevation: stacked translucent ink layers with crisp jagged contours, no rim
         const alt = clamp((hc[j] - seaLevel) / (1 - seaLevel + 1e-9), 0, 1);
@@ -1710,7 +2042,7 @@ function drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold,
 
         // Relief shading (flat ground has hillshade ~0.7)
         const sh = hillshade(h, n, x, y);
-        const shade = clamp(1 + (sh - 0.7) * 0.6, 0.78, 1.12);
+        const shade = clamp(1 + (sh - 0.7) * 0.72, 0.76, 1.14); // a bit stronger: relief reads better
         r *= shade; g *= shade; b *= shade;
 
         // Pale edge along the shore
@@ -1859,7 +2191,7 @@ function biomeId(height, seaLevel, temp, rain, desertStrength, slope, wet, rise)
   if (temp < 0.2) return BIOME.TUNDRA;
   if (temp < 0.34) return moist < 0.28 ? BIOME.TUNDRA : BIOME.TAIGA;
 
-  const hot = temp > 0.6;
+  const hot = temp > 0.56; // ~35 deg on lowland with the linear Earth curve
   if (moist < desertCut) return hot ? BIOME.HOT_DESERT : BIOME.COLD_DESERT;
   if (moist < steppeCut) return hot ? BIOME.SAVANNA : BIOME.STEPPE;
   if (moist < shrubCut) return temp > 0.45 ? BIOME.SHRUBLAND : BIOME.STEPPE;
@@ -1926,8 +2258,11 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
       tilt: clamp(Number(pl.tilt ?? EARTH.tilt), 0, 90),
       flux: clamp(Number(pl.flux ?? 1), 0.05, 20),
       cells: [1, 3, 5].includes(pl.cells) ? pl.cells : 3,
+      locked: !!pl.locked,
+      atmo: ATMO[pl.atmo] ? pl.atmo : 'earth',
+      ecc: clamp(Number(pl.ecc ?? EARTH.ecc), 0, 0.9),
     };
-    LAT_TEMP = isEarth(PLANET) ? null : buildLatTemp(PLANET);
+    LAT_TEMP = isEarth(PLANET) ? null : PLANET.locked ? buildLockedTemp(PLANET) : buildLatTemp(PLANET);
     const seed = (opts.seed ?? 1337) | 0;
     const seaLevel = clamp(opts.seaLevel ?? 0.50, 0.05, 0.95);
     const riverThreshold = opts.riverThreshold ?? 600;
@@ -1947,6 +2282,8 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
 
     // 2) Land relief: lowlands, plateaus and hills instead of one dome per continent
     shapeLand(h, n, seed, seaLevel);
+    // 2b) Volcanic island chains in the open ocean
+    addIslandChains(h, n, seed, seaLevel);
 
     // 3) Mountains, rifts and island arcs along plate edges
     const plates = generatePlates(seed, platesCount);
@@ -1966,6 +2303,19 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
     streamErodeHalf(h, n, seaLevel, STREAM_ERODE_PASSES, STREAM_ERODE_K);
     thermalErode(h, n, 7, 0.017);
     shapeCoasts(h, n, seed, seaLevel);
+    // 4b) Inland basins below sea level (not joined to the ocean) were all drawn as lakes:
+    // up to 8% of the land under water. They become ordinary hollows just above the sea,
+    // so only the deepest and largest ones fill with water (the lake budget in drawMap).
+    {
+      const open = connectedToEdge(h, n, seaLevel);
+      for (let i = 0; i < h.length; i++) {
+        if (h[i] <= seaLevel && !open[i]) {
+          // the old shape squeezed to a gentle slope (exact flats make the water flow slow
+          // to compute), high enough that rivers do not cut it below the sea
+          h[i] = seaLevel + Math.max(0.006, 0.012 + (h[i] - seaLevel) * 0.25);
+        }
+      }
+    }
 
     // 5) Climate (before hydrology: river flow depends on rain)
     const temp = computeTemperature(h, n, seaLevel, seed);
@@ -2020,6 +2370,8 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
 	    biomeIds[i] = biomeId(h[i], seaLevel, temp[i], rain[i], desertStrength, slope, wet, rise);
 	  }
 	}
+	// savanna / steppe / shrubs between deserts and forests, tundra between ice and forest
+	addTransitions(biomeIds, h, n, seaLevel, Math.max(4, Math.round(11 * slopeScale)));
 	smoothBiomeIds(biomeIds, h, n, seaLevel, 2);
 
 	window.TerrainMap.lastMode = mode;
@@ -2028,6 +2380,9 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
 	window.TerrainMap.lastHeight = nh;
 	window.TerrainMap.lastHeights = h;
 	window.TerrainMap.lastSeaLevel = seaLevel;
+	// for the seasons layer (seasonLayer): the year-mean temperature and the planet
+	window.TerrainMap.lastTemp = temp;
+	window.TerrainMap.lastPlanet = { ...PLANET };
 
 drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, desertStrength, hf, seed, down);
 	
@@ -2040,5 +2395,6 @@ drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, de
     lastHeights: null, lastSeaLevel: 0,
     // the planet module (planet-system.js) uses these for its explanations
     annualInsolation, latTempFor: (p) => buildLatTemp({ ...EARTH, ...p }),
+    seasonLayer, lastIce: null, seaIceColor: SEA_ICE,
   };
 })();

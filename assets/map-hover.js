@@ -49,6 +49,10 @@
     const n = TM && TM.lastSize;
     if (!ids || !n) return null;
     const i = y * n + x;
+    // ice and seasonal snow drawn over the map (terrain-page.js / TerrainMap.seasonLayer)
+    const ice = TM.lastIce && TM.lastIce[i];
+    if (ice === 1) return { color: TM.seaIceColor || [224, 234, 242], label: t('legend.seaIce'), level: '' };
+    if (ice === 2) return { color: TM.atlas.snow, label: t('legend.seasonSnow'), level: levelText(TM, i, false) };
     if (TM.lastLake && TM.lastLake[i]) return { color: TM.atlas.lake, label: t('legend.lake'), level: '' };
     const id = ids[i];
     if (id === 0) return { color: TM.atlas.depthBands[1].c, label: t('legend.sea'), level: levelText(TM, i, true) };
@@ -67,11 +71,19 @@
     const TM = window.TerrainMap;
     const view = TM && TM.view;
     const n = TM && TM.lastSize, nh = TM && TM.lastHeight;
-    if (!view || !n || !nh) return hide();
+    if (!n || !nh || (!view && !(TM && TM.pick))) return hide();
     const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
     if (cx < 0 || cy < 0 || cx >= rect.width || cy >= rect.height) return hide();
-    const x = ((Math.floor(view.ox + cx / view.scale) % n) + n) % n;
-    const y = Math.floor(view.oy + cy / view.scale);
+    let x, y;
+    if (TM.pick) {
+      // the globe view: terrain-page.js turns the point on the disc back into a map pixel
+      const p = TM.pick(cx, cy);
+      if (!p) return hide();
+      x = p.x; y = p.y;
+    } else {
+      x = ((Math.floor(view.ox + cx / view.scale) % n) + n) % n;
+      y = Math.floor(view.oy + cy / view.scale);
+    }
     if (y < 0 || y >= nh) return hide();
 
     const z = zoneAt(x, y);

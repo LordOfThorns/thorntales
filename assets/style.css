@@ -762,6 +762,30 @@ footer.wrap.bottom{
   color: var(--muted);
 }
 .planet-note{ margin: 12px 0 0; font-size: 12px; color: var(--faint); }
+.planet-check{
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.planet-check input{ width: 16px; height: 16px; margin: 0; accent-color: #d6b25c; flex: none; }
+.planet-season{
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid rgba(214, 178, 92, .22);
+  border-radius: 10px;
+}
+.planet-season.is-off{ opacity: .5; }
+.planet-season__head{ display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.planet-season .planet-check{ grid-column: auto; }
+.planet-play{ padding: 4px 12px; font-size: 13px; }
+.planet-season__out{ font-size: 13px; color: #d6b25c; }
+.field[hidden]{ display: none; }
 @media (max-width: 720px){
   .planet-grid{ grid-template-columns: 1fr; }
 }
@@ -802,6 +826,14 @@ footer.wrap.bottom{
 .map-tools{ display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-top: 8px; }
 .map-tools .map-hint{ margin: 4px 0 0; }
 .map-tools .btn{ flex: none; padding: 6px 12px; font-size: 13px; }
+.map-tools__btns{ display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex: none; }
+/* the globe floats in dark space */
+.map-stage.is-globe{ background: radial-gradient(ellipse at 50% 45%, #10162a 0%, #05070e 70%); }
+.map-stage.is-globe #map{ cursor: grab; }
+@media (max-width: 520px){
+  .map-tools{ flex-direction: column; }
+  .map-tools__btns{ justify-content: flex-start; }
+}
 
 #map{
   width: 100%;
