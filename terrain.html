@@ -10,7 +10,7 @@
   <meta property="og:image" content="https://www.thorntales.net/assets/preview.png">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title data-i18n="nav.mapGen">Генератор карт · Thorntales</title>
-  <link rel="stylesheet" href="/assets/style.css?v=73" />
+  <link rel="stylesheet" href="/assets/style.css?v=75" />
 </head>
 <body data-page="mapGen">
   <main class="wrap map-page">
@@ -83,6 +83,62 @@
         </label>
       </div>
 
+      <section class="planet-box" id="planetBox" aria-labelledby="planetTitle">
+        <div class="planet-head">
+          <h2 class="planet-title" id="planetTitle" data-i18n="planet.title">Планетная система</h2>
+          <span class="planet-badge" data-i18n="planet.badge">прототип · in development</span>
+        </div>
+        <div class="planet-grid">
+          <div class="planet-orrery">
+            <canvas id="orrery" aria-label="orrery"></canvas>
+            <p class="planet-orrery__hint" data-i18n="planet.dragHint">Тяните планету ближе к звезде или дальше. Зелёное кольцо — зона жизни.</p>
+          </div>
+          <div class="planet-fields">
+            <label class="field map-field">
+              <span class="field__label" data-i18n="planet.star">Звезда</span>
+              <select class="input" id="plStar">
+                <option value="red" data-i18n="planet.starRed">красный карлик — тусклый</option>
+                <option value="orange" data-i18n="planet.starOrange">оранжевая</option>
+                <option value="yellow" selected data-i18n="planet.starYellow">жёлтая, как Солнце</option>
+                <option value="white" data-i18n="planet.starWhite">белая — ярче</option>
+                <option value="blue" data-i18n="planet.starBlue">голубая — очень яркая</option>
+              </select>
+            </label>
+            <label class="field map-field">
+              <span class="field__label" data-i18n="planet.star2">Вторая звезда (тесная пара)</span>
+              <select class="input" id="plStar2">
+                <option value="" selected data-i18n="planet.star2None">нет</option>
+                <option value="red" data-i18n="planet.starRed">красный карлик — тусклый</option>
+                <option value="orange" data-i18n="planet.starOrange">оранжевая</option>
+                <option value="yellow" data-i18n="planet.starYellow">жёлтая, как Солнце</option>
+                <option value="white" data-i18n="planet.starWhite">белая — ярче</option>
+                <option value="blue" data-i18n="planet.starBlue">голубая — очень яркая</option>
+              </select>
+            </label>
+            <label class="field map-field">
+              <span class="field__label"><span data-i18n="planet.distance">Расстояние до звезды</span> <output class="map-val" id="plDistOut"></output></span>
+              <input class="map-slider" id="plDist" type="range" min="0" max="1000" step="1" value="500">
+              <span class="map-scale"><span data-i18n="planet.closer">ближе</span><button class="planet-hz" type="button" id="plToHz" data-i18n="planet.toHz">в зону жизни</button><span data-i18n="planet.further">дальше</span></span>
+            </label>
+            <label class="field map-field">
+              <span class="field__label"><span data-i18n="planet.tilt">Наклон оси</span> <output class="map-val" id="plTiltOut"></output></span>
+              <input class="map-slider" id="plTilt" type="range" min="0" max="90" step="1" value="23">
+              <span class="map-scale"><span data-i18n="planet.tiltNone">без сезонов</span><span data-i18n="planet.tiltSide">на боку</span></span>
+            </label>
+            <label class="field map-field">
+              <span class="field__label" data-i18n="planet.day">Вращение</span>
+              <select class="input" id="plDay">
+                <option value="1" data-i18n="planet.daySlow">медленное — сутки длиной в месяцы</option>
+                <option value="3" selected data-i18n="planet.dayEarth">как у Земли</option>
+                <option value="5" data-i18n="planet.dayFast">быстрое — сутки в несколько часов</option>
+              </select>
+            </label>
+            <p class="planet-summary" id="plSummary" aria-live="polite"></p>
+          </div>
+        </div>
+        <p class="planet-note" data-i18n="planet.note">* Это прототип, модуль в разработке (in development). Климат считается упрощённо: учтены только свет звёзд, наклон оси и число поясов ветров. Сезоны по отдельности, морской лёд, приливный захват и цвет света звезды пока не учитываются.</p>
+      </section>
+
       <div class="map-panel__foot">
         <label class="map-hover-toggle"><input type="checkbox" id="hoverZones" checked> <span data-i18n="map.hover">Зона под курсором</span></label>
         <button class="btn btn--primary map-gen" type="submit" id="gen" data-i18n="terrain.generate">Сгенерировать</button>
@@ -110,12 +166,13 @@
     </footer>
   </main>
 
-  <script src="/assets/i18n.js?v=37"></script>
+  <script src="/assets/i18n.js?v=39"></script>
   <script src="/assets/layout.js?v=7"></script>
-  <script src="/assets/terrain-map.js?v=37"></script>
+  <script src="/assets/terrain-map.js?v=38"></script>
   <script src="/assets/map-legend.js?v=4"></script>
   <script src="/assets/map-hover.js?v=7"></script>
-  <script src="/assets/terrain-page.js?v=7"></script>
+  <script src="/assets/planet-system.js?v=1"></script>
+  <script src="/assets/terrain-page.js?v=8"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
   <script src="/assets/auth.js?v=2"></script>
 </body>

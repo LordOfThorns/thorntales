@@ -56,6 +56,7 @@
       desertStrength: int($('desert'), 0, 100, 35) / 100,
       plates: 18,
       windDir: 'W',
+      planet: window.PlanetSystem ? PlanetSystem.planet() : null, // prototype (planet-system.js)
     };
   }
 

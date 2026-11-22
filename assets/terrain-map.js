@@ -137,11 +137,15 @@
       const north = v < 0.5;
       const lat = Math.abs(v - 0.5) * 2;
 
-      const zonal = -Math.cos(2 * Math.PI * lat);
-      let poleward;
-      if (lat < 0.25) poleward = -Math.sin(Math.PI * lat / 0.25);
-      else if (lat < 0.75) poleward = Math.sin(Math.PI * (lat - 0.25) / 0.5);
-      else poleward = -Math.sin(Math.PI * (lat - 0.75) / 0.25);
+      // c cells per hemisphere (3 on Earth): the belt wind turns at the cell borders,
+      // easterly in the tropical cell; one slow cell has weak easterlies everywhere
+      const c = PLANET.cells;
+      const zonal = c === 1 ? -0.5 : -Math.cos(Math.PI * (c - 1) * lat);
+      const pts = [0, ...cellBorders(c), 1];
+      let j = 0;
+      while (j < pts.length - 2 && lat > pts[j + 1]) j++;
+      // surface flow: towards the equator in the tropical cell, then alternating
+      const poleward = (j % 2 === 0 ? -1 : 1) * Math.sin(Math.PI * (lat - pts[j]) / (pts[j + 1] - pts[j]));
       const bx = zonal;
       const by = WIND_MERIDIONAL * poleward * (north ? -1 : 1); // screen y points south
 
@@ -924,6 +928,127 @@ function sampleHeightNearest(h, n, u, v) {
     return acc;
   }
 
+  // -------------------- Planet (prototype) --------------------
+  // opts.planet = { tilt (degrees), flux (sunlight, Earth = 1), cells (wind cells per
+  // hemisphere: 1 slow rotation, 3 like Earth, 5 fast) }. Everything is measured against
+  // Earth: with tilt 23.44, flux 1 and 3 cells the maps are exactly as without it.
+  //  - Temperature: annual mean sunlight by latitude for the tilt (the standard daily
+  //    insolation formula averaged over a year), times flux, as an effective temperature
+  //    (sunlight^1/4), turned into the map's 0..1 temperature through Earth's own curve.
+  //    At tilt > ~54 degrees the poles get more sun in a year than the equator.
+  //  - Slow rotation carries heat better: the equator-pole contrast is softened.
+  //  - Wind cells: the belts (and the calm, dry belts between them) follow the cell count;
+  //    rain is also raised where surface winds meet and lowered where they part, relative
+  //    to Earth's pattern.
+  const EARTH = { tilt: 23.44, flux: 1, cells: 3 };
+  let PLANET = EARTH;
+  let LAT_TEMP = null;      // temperature at lat 0..1 (LAT_STEPS + 1 values), null = Earth
+  const LAT_STEPS = 256;
+  const BELT_RAIN = 0.7;    // how strongly rising / sinking air changes rain
+  const HEAT_SPREAD = 0.8;  // share of the difference from Earth's curve left after heat transport
+
+  // Annual mean daily sunlight at latitude phi for axial tilt eps (radians); 1/pi of the
+  // solar constant units, circular orbit
+  function annualInsolation(phi, eps) {
+    const N = 120;
+    const p = Math.min(phi, Math.PI / 2 - 1e-4);
+    let s = 0;
+    for (let k = 0; k < N; k++) {
+      const dec = Math.asin(Math.sin(eps) * Math.sin(((k + 0.5) / N) * 2 * Math.PI));
+      const c = -Math.tan(p) * Math.tan(dec);
+      const h0 = c >= 1 ? 0 : c <= -1 ? Math.PI : Math.acos(c); // half day length
+      s += h0 * Math.sin(p) * Math.sin(dec) + Math.cos(p) * Math.cos(dec) * Math.sin(h0);
+    }
+    return s / N / Math.PI;
+  }
+
+  function buildLatTemp(planet) {
+    const earthTemp = (lat) => 1 - Math.pow(lat, 1.2); // the curve the generator always used
+    const tauOf = (tilt, flux) => {
+      const a = new Float64Array(LAT_STEPS + 1);
+      for (let k = 0; k <= LAT_STEPS; k++) {
+        a[k] = Math.pow(flux * annualInsolation((k / LAT_STEPS) * Math.PI / 2, tilt * Math.PI / 180), 0.25);
+      }
+      return a;
+    };
+    const te = tauOf(EARTH.tilt, 1);
+    const norm = te[0];
+    for (let k = 0; k <= LAT_STEPS; k++) te[k] /= norm; // Earth: 1 at the equator, falling
+    const tp = tauOf(planet.tilt, planet.flux);
+    const slope = 1 / (te[0] - te[LAT_STEPS]); // temperature per unit of tau beyond Earth's range
+    const out = new Float32Array(LAT_STEPS + 1);
+    for (let k = 0; k <= LAT_STEPS; k++) {
+      const tau = tp[k] / norm;
+      let temp;
+      if (tau >= te[0]) temp = 1 + (tau - te[0]) * slope;
+      else if (tau <= te[LAT_STEPS]) temp = (tau - te[LAT_STEPS]) * slope;
+      else {
+        // Earth's latitude with the same sunlight (te falls monotonically)
+        let lo = 0, hi = LAT_STEPS;
+        while (hi - lo > 1) { const m = (lo + hi) >> 1; if (te[m] >= tau) lo = m; else hi = m; }
+        const f = (te[lo] - tau) / (te[lo] - te[hi] + 1e-12);
+        temp = earthTemp((lo + f) / LAT_STEPS);
+      }
+      out[k] = clamp(temp, -0.8, 1.6);
+    }
+    // Winds and currents carry heat: Earth's curve already includes that, but the
+    // difference from Earth is spread out as well (pulled towards its global mean)
+    {
+      let mean = 0, wsum = 0;
+      for (let k = 0; k <= LAT_STEPS; k++) {
+        const w = Math.cos((k / LAT_STEPS) * Math.PI / 2); // area of the latitude band
+        mean += (out[k] - earthTemp(k / LAT_STEPS)) * w; wsum += w;
+      }
+      mean /= wsum;
+      for (let k = 0; k <= LAT_STEPS; k++) {
+        const e = earthTemp(k / LAT_STEPS);
+        out[k] = e + mean + HEAT_SPREAD * (out[k] - e - mean);
+      }
+    }
+    // slow rotation spreads heat towards the poles, fast rotation keeps it in the tropics
+    const spread = planet.cells <= 1 ? 0.7 : planet.cells >= 5 ? 1.15 : 1;
+    if (spread !== 1) {
+      let mean = 0, wsum = 0;
+      for (let k = 0; k <= LAT_STEPS; k++) {
+        const w = Math.cos((k / LAT_STEPS) * Math.PI / 2); // area of the latitude band
+        mean += out[k] * w; wsum += w;
+      }
+      mean /= wsum;
+      for (let k = 0; k <= LAT_STEPS; k++) out[k] = mean + (out[k] - mean) * spread;
+    }
+    return out;
+  }
+
+  function latTemp(lat) {
+    if (!LAT_TEMP) return 1.0 - Math.pow(lat, 1.2);
+    const f = clamp(lat, 0, 1) * LAT_STEPS;
+    const k = Math.min(LAT_STEPS - 1, Math.floor(f));
+    return lerp(LAT_TEMP[k], LAT_TEMP[k + 1], f - k);
+  }
+
+  function isEarth(p) {
+    return Math.abs(p.tilt - EARTH.tilt) < 0.01 && Math.abs(p.flux - 1) < 1e-4 && p.cells === 3;
+  }
+
+  // Wind cell borders (lat 0..1) for c cells per hemisphere: where the belt wind turns.
+  // c = 3 gives 0.25 and 0.75, the borders the generator always used.
+  function cellBorders(c) {
+    const b = [];
+    for (let k = 0; k < c - 1; k++) b.push(c === 1 ? 0 : (2 * k + 1) / (2 * (c - 1)));
+    return b;
+  }
+
+  // +1 where surface winds meet and air rises (wet: the equator, polar fronts),
+  // -1 where they part and air sinks (dry: subtropical highs, the poles)
+  function convergence(c, lat) {
+    const pts = [0, ...cellBorders(c), 1];
+    let j = 0;
+    while (j < pts.length - 2 && lat > pts[j + 1]) j++;
+    const t = clamp((lat - pts[j]) / (pts[j + 1] - pts[j] + 1e-9), 0, 1);
+    const a = j % 2 === 0 ? 1 : -1;
+    return lerp(a, -a, (1 - Math.cos(Math.PI * t)) / 2);
+  }
+
   // -------------------- Climate --------------------
 
   // Latitude is bent by noise (warm and cold tongues, like ocean currents and air masses),
@@ -943,7 +1068,7 @@ function sampleHeightNearest(h, n, u, v) {
         const warp = (wfbm(u, v, 3, seed + 800, 3, 0.5) - 0.5) * 2 * TEMP_LAT_WARP;
         const lat = clamp(Math.abs(v - 0.5) * 2.0 + warp, 0, 1); // 0 equator -> 1 poles
         // base temperature curve (nonlinear: wider tropics) + local variation
-        const base = 1.0 - Math.pow(lat, 1.2)
+        const base = latTemp(lat) // Earth: 1 - lat^1.2; other planets: see Planet above
           + (wfbm(u, v, 8, seed + 810, 2, 0.5) - 0.5) * 2 * TEMP_LOCAL;
 
         // altitude cooling (only above sea)
@@ -1047,6 +1172,15 @@ function sampleHeightNearest(h, n, u, v) {
     let Q = new Float32Array(cg * cgh);   // moisture in the air
     let Qn = new Float32Array(cg * cgh);
     const PR = new Float32Array(cg * cgh); // precipitation per step
+    // rising or sinking air by latitude for the planet's wind cells, relative to Earth
+    // (all 1 on Earth-like planets)
+    const belt = new Float32Array(cgh).fill(1);
+    if (PLANET.cells !== EARTH.cells) {
+      for (let y = 0; y < cgh; y++) {
+        const lat = Math.abs(y / (cgh - 1) - 0.5) * 2;
+        belt[y] = Math.exp(BELT_RAIN * (convergence(PLANET.cells, lat) - convergence(EARTH.cells, lat)));
+      }
+    }
     const evap = (j) => 0.35 + 0.65 * T[j];
     const capacity = (j) => 0.2 + 0.8 * T[j];
     for (let j = 0; j < Q.length; j++) Q[j] = land[j] ? 0 : evap(j);
@@ -1084,6 +1218,7 @@ function sampleHeightNearest(h, n, u, v) {
             const lift = LIFT[j];
             let rate = pBase + (lift > 0 ? kOro * lift : 0);
             if (lift < 0) rate *= Math.exp(kShadow * lift);
+            rate *= belt[y];
             let p = q * clamp(rate, 0, 0.9);
             const excess = q - p - capacity(j);
             if (excess > 0) p += excess;
@@ -1785,6 +1920,14 @@ function smoothBiomeIds(ids, h, n, seaLevel, iterations) {
     const n = opts.size || 1280;
     const nh = n >> 1;
     ASPECT = n / nh;
+    // the planet (prototype): Earth when not given
+    const pl = opts.planet || {};
+    PLANET = {
+      tilt: clamp(Number(pl.tilt ?? EARTH.tilt), 0, 90),
+      flux: clamp(Number(pl.flux ?? 1), 0.05, 20),
+      cells: [1, 3, 5].includes(pl.cells) ? pl.cells : 3,
+    };
+    LAT_TEMP = isEarth(PLANET) ? null : buildLatTemp(PLANET);
     const seed = (opts.seed ?? 1337) | 0;
     const seaLevel = clamp(opts.seaLevel ?? 0.50, 0.05, 0.95);
     const riverThreshold = opts.riverThreshold ?? 600;
@@ -1895,5 +2038,7 @@ drawMap(ctx, h, acc, temp, rain, biomeIds, n, seaLevel, riverThreshold, mode, de
     render, biomeColors: ATLAS_BIOMES, atlas: ATLAS,
     lastMode: null, lastBiomeIds: null, lastLake: null, lastSize: 0,
     lastHeights: null, lastSeaLevel: 0,
+    // the planet module (planet-system.js) uses these for its explanations
+    annualInsolation, latTempFor: (p) => buildLatTemp({ ...EARTH, ...p }),
   };
 })();
